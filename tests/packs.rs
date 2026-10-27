@@ -136,6 +136,28 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
         ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
     assert_eq!(runtime.parameters[0].name, "forge_crystal_color");
     assert_eq!(runtime.parameters[0].value, 61.0);
+    let crystal_dispersion = effects[1]
+        .controls
+        .iter()
+        .find(|c| c.key == "forge_crystal_dispersion")
+        .unwrap();
+    assert_eq!(store.value(crystal_dispersion), json!(1));
+    store.set_control(crystal_dispersion, &json!(7)).unwrap();
+    store.select_effect(liquid).unwrap();
+    assert_eq!(store.value(dispersion), json!(8));
+    store.select_effect(&effects[1]).unwrap();
+    assert_eq!(store.value(crystal_dispersion), json!(7));
+    let runtime: RuntimeEffect =
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+    assert_eq!(
+        runtime
+            .parameters
+            .iter()
+            .find(|p| p.name == "forge_crystal_dispersion")
+            .unwrap()
+            .value,
+        7.0
+    );
     assert_eq!(store.value(effects[1].controls.last().unwrap()), json!(50));
 }
 
