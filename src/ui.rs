@@ -27,6 +27,8 @@ impl CosmicFlags for Flags {
 #[derive(Clone, Copy, Debug)]
 enum Page {
     Effect(usize),
+    Panel,
+    LockScreen,
     Surfaces,
 }
 #[derive(Clone, Debug)]
@@ -34,6 +36,8 @@ pub enum Message {
     Value(usize, Value),
     Flush,
     Category(&'static str, bool),
+    Panel,
+    LockScreen,
     Surfaces,
     Reset,
     About(bool),
@@ -60,8 +64,11 @@ enum TransferEvent {
 pub struct Forge {
     core: Core,
     nav: nav_bar::Model,
+    panel_nav: nav_bar::Model,
+    lock_nav: nav_bar::Model,
     effects: Vec<Effect>,
     page: Page,
+    settings_return: Page,
     store: Store,
     state: Fingerprint,
     pending: BTreeMap<String, (Control, Value)>,
@@ -221,15 +228,39 @@ impl Forge {
             .unwrap_or_else(|| self.store.value(control))
     }
     fn sync_selection(&mut self) {
+        let index = self
+            .effects
+            .iter()
+            .position(|e| e.id == self.state.selected)
+            .unwrap_or(0);
         if matches!(self.page, Page::Effect(_)) {
-            let index = self
-                .effects
-                .iter()
-                .position(|e| e.id == self.state.selected)
-                .unwrap_or(0);
             self.page = Page::Effect(index);
-            self.nav.activate_position(index as u16);
         }
+        if matches!(self.settings_return, Page::Effect(_)) {
+            self.settings_return = Page::Effect(index);
+        }
+        for model in [&mut self.nav, &mut self.panel_nav, &mut self.lock_nav] {
+            let active = model.active();
+            widget::segmented_button::Selectable::deactivate(model, active);
+        }
+        let page = match self.page {
+            Page::Surfaces => self.settings_return,
+            page => page,
+        };
+        match page {
+            Page::Effect(index) => self.nav.activate_position(index as u16),
+            Page::Panel => self.panel_nav.activate_position(0),
+            Page::LockScreen => self.lock_nav.activate_position(0),
+            Page::Surfaces => false,
+        };
+    }
+    fn mods_view(&self, title: &str, note: &str) -> Element<'_, Message> {
+        widget::column::with_capacity(3)
+            .spacing(18)
+            .push(text::title2(title.to_owned()))
+            .push(text::body(note.to_owned()))
+            .push(text::body("No mods are available in this section yet."))
+            .into()
     }
     fn effect_view(&self, index: usize) -> Element<'_, Message> {
         let effect = &self.effects[index];
@@ -409,13 +440,20 @@ impl cosmic::Application for Forge {
                 .data(Page::Effect(index));
         }
         nav.activate_position(index as u16);
+        let mut panel_nav = nav_bar::Model::default();
+        panel_nav.insert().text("Panel mods");
+        let mut lock_nav = nav_bar::Model::default();
+        lock_nav.insert().text("Lock screen mods");
         let (status, engine_note) = store::engine_status();
         let needs_engine = !store::effect_available(&effects[index]);
         let mut app = Self {
             core,
             nav,
+            panel_nav,
+            lock_nav,
             effects,
             page: Page::Effect(index),
+            settings_return: Page::Effect(index),
             store,
             state,
             pending: BTreeMap::new(),
@@ -444,6 +482,50 @@ impl cosmic::Application for Forge {
     fn nav_model(&self) -> Option<&nav_bar::Model> {
         Some(&self.nav)
     }
+    fn nav_bar(&self) -> Option<Element<'_, cosmic::Action<Message>>> {
+        if !self.core.nav_bar_active() {
+            return None;
+        }
+        fn group<'a>(
+            title: &'static str,
+            model: &'a nav_bar::Model,
+            select: fn(nav_bar::Id) -> cosmic::Action<Message>,
+        ) -> Element<'a, cosmic::Action<Message>> {
+            widget::column::with_capacity(2)
+                .spacing(4)
+                .push(widget::container(text::caption_heading(title)).padding([8, 16]))
+                .push(
+                    widget::segmented_button::vertical(model)
+                        .button_height(32)
+                        .button_padding([8, 24, 8, 24])
+                        .button_spacing(8)
+                        .spacing(8)
+                        .style(cosmic::theme::SegmentedButton::NavBar)
+                        .on_activate(select),
+                )
+                .into()
+        }
+        let groups = widget::column::with_capacity(3)
+            .spacing(16)
+            .push(group("Shaders", &self.nav, |id| {
+                cosmic::Action::Cosmic(cosmic::app::Action::NavBar(id))
+            }))
+            .push(group("Panel", &self.panel_nav, |_| {
+                cosmic::Action::App(Message::Panel)
+            }))
+            .push(group("Lock screen", &self.lock_nav, |_| {
+                cosmic::Action::App(Message::LockScreen)
+            }));
+        let mut sidebar = widget::container(widget::scrollable(groups).height(Length::Fill))
+            .padding(8)
+            .width(Length::Shrink)
+            .height(Length::Fill)
+            .class(cosmic::theme::Container::custom(nav_bar::nav_bar_style));
+        if !self.core.is_condensed() {
+            sidebar = sidebar.max_width(280);
+        }
+        Some(sidebar.into())
+    }
     fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<Message> {
         if !self.flush() {
             return Task::none();
@@ -460,7 +542,7 @@ impl cosmic::Application for Forge {
                 }
             }
             self.page = page;
-            self.nav.activate(id);
+            self.sync_selection();
         }
         Task::none()
     }
@@ -477,6 +559,8 @@ impl cosmic::Application for Forge {
     fn view(&self) -> Element<'_, Message> {
         let content = match self.page {
             Page::Effect(i) => self.effect_view(i),
+            Page::Panel => self.mods_view("Panel", "Panel and dock mods for your COSMIC desktop."),
+            Page::LockScreen => self.mods_view("Lock screen", "Mods for your COSMIC lock screen."),
             Page::Surfaces => self.surfaces_view(),
         };
         widget::scrollable(
@@ -489,7 +573,7 @@ impl cosmic::Application for Forge {
         .into()
     }
     fn footer(&self) -> Option<Element<'_, Message>> {
-        if matches!(self.page, Page::Surfaces) && self.error.is_none() {
+        if !matches!(self.page, Page::Effect(_)) && self.error.is_none() {
             return None;
         }
         let runtime_note = (matches!(self.page, Page::Effect(index) if self.effects[index].shader.is_some()) && !packs::engine_active())
@@ -588,6 +672,7 @@ impl cosmic::Application for Forge {
             Message::EngineSettings => {
                 if self.flush() {
                     self.needs_engine = false;
+                    self.settings_return = self.page;
                     self.page = Page::Surfaces;
                 }
             }
@@ -665,8 +750,21 @@ impl cosmic::Application for Forge {
             Message::Surfaces => {
                 if self.flush() {
                     self.page = match self.page {
-                        Page::Surfaces => Page::Effect(0),
-                        Page::Effect(_) => Page::Surfaces,
+                        Page::Surfaces => self.settings_return,
+                        page => {
+                            self.settings_return = page;
+                            Page::Surfaces
+                        }
+                    };
+                    self.sync_selection();
+                }
+            }
+            Message::Panel | Message::LockScreen => {
+                if self.flush() {
+                    self.page = if matches!(message, Message::Panel) {
+                        Page::Panel
+                    } else {
+                        Page::LockScreen
                     };
                     self.sync_selection();
                 }

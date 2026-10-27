@@ -2,6 +2,8 @@
 
 A native mod manager for the **COSMIC desktop**. Currently supports glass shader
 effects: Frosted Glass, Crystal, Aero and community effects.
+The sidebar groups Shaders, Panel and Lock screen; the latter two are ready for
+their first mod integrations.
 
 Adjust effects, import JSON + `.frag` files and manage the glass compositor from
 Settings. Independent repositories maintain the

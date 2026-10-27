@@ -148,6 +148,9 @@ class Session:
         image.save(self.path / 'screenshots' / f'{name}.png')
         return image
 
+    def select_effect(self, index):
+        self.click(100, 108 + 40 * index)
+
     def scroll_to_bottom(self):
         xtest.fake_input(self.display, X.MotionNotify, x=750, y=650)
         for _ in range(20):
@@ -187,10 +190,10 @@ def exercise(session):
     check('Native window opens without changing preferences', session.get('glass_effect') == '"aero"' and (not (session.path / 'state/cosmic-forge/backups').exists()))
     session.capture('cosmic-forge-light')
     session.capture('cosmic-forge')
-    session.click(100, 112)
+    session.select_effect(1)
     check('Sidebar selects Crystal', session.get('glass_effect') == '"crystal"')
     session.capture('cosmic-forge-crystal')
-    session.click(100, 152)
+    session.select_effect(2)
     check('Sidebar returns to Aero', session.get('glass_effect') == '"aero"')
     session.click(968, 282)
     check('Native spin button saves a precise step', session.get('aero_blur_amount') == '46')
@@ -240,12 +243,12 @@ def exercise(session):
     session.click(888 if step == 1 else 968, 355)
     check('Opacity can be adjusted back through the visible control', session.opacity() == opacity)
     session.capture('cosmic-forge-frosted')
-    session.click(100, 152)
+    session.select_effect(2)
     session.click(968 if step == 1 else 888, 564)
     check('Aero exposes the same shared opacity control', session.opacity() == opacity + step)
-    session.click(100, 112)
+    session.select_effect(1)
     check('Opacity survives switching to Crystal', session.opacity() == opacity + step)
-    session.click(100, 152)
+    session.select_effect(2)
     mode = session.config / 'cosmic/com.system76.CosmicTheme.Mode/v1/is_dark'
     mode.parent.mkdir(parents=True, exist_ok=True)
     mode.write_text('true\n')
@@ -265,7 +268,7 @@ def exercise(session):
                    env=session.environment, check=True, capture_output=True)
     time.sleep(1.6)
     check('Importing a community pack preserves the current effect', session.get('glass_effect') == '"aero"')
-    session.click(100, 192)
+    session.select_effect(3)
     check('Imported glass appears in the sidebar without reopening Forge', session.get('glass_effect') == '"prism"')
     check('Selecting the imported effect sends shader source to the renderer',
           'forge_prism_amount' in session.get('forge_runtime'))
@@ -277,7 +280,7 @@ def exercise(session):
           not (session.path / 'data/cosmic-forge/packs/prism-demo.json').exists() and
           (session.path / 'data/cosmic-forge/packs/prism-demo.previous').exists())
     session.capture('cosmic-forge-after-removal')
-    session.click(100, 152)
+    session.select_effect(2)
     check('Returning to a built-in effect clears the runtime shader', session.get('forge_runtime') is None)
     subprocess.run(['setxkbmap', '-display', session.screen, '-layout', 'ir'], check=True)
     time.sleep(0.4)

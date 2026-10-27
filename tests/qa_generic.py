@@ -20,7 +20,7 @@ def main():
         subprocess.run([str(session.binary), '--import-pack', str(example / 'plain-glass.json'),
                         str(example / 'plain-glass.frag')], env=session.environment, check=True, capture_output=True)
         time.sleep(1.3)
-        session.click(100, 192)
+        session.select_effect(3)
         assert session.get('glass_effect') == '"aero"', 'Revision 1 accepted a generic effect'
         session.capture('revision-one-needs-update')
         session.key('Escape')
@@ -28,7 +28,7 @@ def main():
         record = json.loads(record_path.read_text())
         record['renderer_revision'] = 2
         record_path.write_text(json.dumps(record))
-        session.click(100, 192)
+        session.select_effect(3)
         assert session.get('glass_effect') == '"plain-glass"'
         session.capture('plain-glass')
         assert 'base:"glass"' in session.get('forge_runtime')
@@ -36,10 +36,10 @@ def main():
         assert session.get('forge_plain_blur') == '46', session.get('forge_plain_blur')
         assert 'name:"forge_blur",value:46.0' in session.get('forge_runtime')
         session.capture('independent-blur')
-        session.click(100, 152)
+        session.select_effect(2)
         assert session.get('glass_effect') == '"aero"'
         assert before == {key: session.get(key) for key in before}
-        session.click(100, 192)
+        session.select_effect(3)
         assert session.get('forge_plain_blur') == '46'
         assert 'name:"forge_blur",value:46.0' in session.get('forge_runtime')
         (session.path / 'results.json').write_text(json.dumps({

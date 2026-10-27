@@ -24,8 +24,8 @@ def main():
         try:
             initial = session.capture('frosted-live')
             initial.save(artifacts / 'frosted-live.png')
-            for y in (112, 152):
-                session.click(100, y)
+            for index in (1, 2):
+                session.select_effect(index)
                 assert session.get('glass_effect') == '"frosted"'
                 assert session.get('forge_runtime') is None
                 dialog = session.capture('missing-compositor')
@@ -37,7 +37,7 @@ def main():
                 assert ImageChops.difference(initial.crop((250, 350, 800, 470)),
                                             after.crop((250, 350, 800, 470))).getbbox() is None
                 assert session.get('glass_effect') == '"frosted"'
-            session.click(100, 112)
+            session.select_effect(1)
             session.click(720, 499)
             session.capture('settings').save(artifacts / 'settings.png')
             panel = session.config / 'cosmic/com.system76.CosmicTheme.Light/v2/frosted_panel'
@@ -49,7 +49,7 @@ def main():
             subprocess.run([str(session.binary), '--import-pack', str(ROOT / 'shaders/examples/prism.json')],
                            env=session.environment, check=True, capture_output=True)
             time.sleep(1.3)
-            session.click(100, 192)
+            session.select_effect(3)
             assert session.get('glass_effect') == '"frosted"'
             assert session.get('forge_runtime') is None
             session.key('Escape')
