@@ -779,7 +779,7 @@ impl Forge {
             .push(text::title2("Settings"))
             .push(effects)
             .push(
-                settings::section().title("Engine").add(
+                settings::section().title("Patches").add(
                     widget::column::with_capacity(4)
                         .spacing(24)
                         .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install prebuilt binaries, then sign out and back in."))

@@ -38,7 +38,10 @@ def asset(release, arch):
         raise RuntimeError('Expected a stable Forge release')
     version = tag[1:]
     name = f'cosmic-forge-{version}-linux-{arch}.tar.xz'
-    found = next((a for a in release.get('assets', []) if isinstance(a, dict) and a.get('name') == name), None)
+    assets = release.get('assets')
+    if not isinstance(assets, list):
+        raise RuntimeError('Invalid release assets')
+    found = next((a for a in assets if isinstance(a, dict) and a.get('name') == name), None)
     if found is None:
         raise RuntimeError('No prebuilt release for ' + arch)
     if found.get('browser_download_url') != f'https://github.com/{REPO}/releases/download/{tag}/{name}':

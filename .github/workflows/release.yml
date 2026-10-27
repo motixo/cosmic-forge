@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish only after every build and runtime test passes
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,9 +49,13 @@ jobs:
           components: rustfmt, clippy
           rustflags: ''
       - name: Build and packaging dependencies
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake libfontconfig1-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libdbus-1-dev libudev-dev libssl-dev libvulkan-dev rpm libarchive-tools zstd desktop-file-utils
+          if [ -f /etc/apt/sources.list ]; then
+            sudo sed -i 's/azure.archive.ubuntu.com/archive.ubuntu.com/g' /etc/apt/sources.list
+          fi
+          timeout 180 sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          timeout 240 sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends build-essential pkg-config cmake libfontconfig1-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libdbus-1-dev libudev-dev libssl-dev libvulkan-dev rpm libarchive-tools zstd desktop-file-utils
       - uses: actions/cache@v4
         with:
           path: |
@@ -59,6 +68,7 @@ jobs:
       - run: cargo test --locked --no-default-features
       - run: cargo build --release --locked
       - run: python -m unittest discover -s tests -p 'test_install.py' -v
+      - run: python -m unittest discover -s tests -p 'test_release.py' -v
       - name: Package native releases
         run: |
           export SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
@@ -98,10 +108,10 @@ jobs:
         if: always()
         with:
           name: runtime-${{ matrix.name }}
-          path: build/runtime/**/screenshots/*.png
+          path: build/runtime/gui/screenshots/*.png
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     needs: [check, binary, runtime]
     runs-on: ubuntu-24.04
     permissions:
@@ -116,7 +126,18 @@ jobs:
           merge-multiple: true
           path: build/release
       - name: Package complete source and checksums
+        id: version
         run: |
+          python3 - <<'PYTHON'
+          import os, tomllib
+          version = tomllib.load(open('Cargo.toml', 'rb'))['package']['version']
+          tag = 'v' + version
+          ref = os.environ['GITHUB_REF']
+          if ref.startswith('refs/tags/') and ref != 'refs/tags/' + tag:
+              raise SystemExit('Release tag must match Cargo.toml')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('tag=' + tag + '\n')
+          PYTHON
           export SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
           python3 scripts/package_release.py --source-only
           cp install.sh build/release/install.sh
@@ -125,6 +146,8 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$TAG" build/release/* --verify-tag --latest --title "COSMIC Forge ${TAG#v}" --notes-file .github/release-notes.md
+          options=(--target "$GITHUB_SHA")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then options=(--verify-tag); fi
+          gh release create "$TAG" build/release/* "${options[@]}" --latest --title "COSMIC Forge ${TAG#v}" --notes-file .github/release-notes.md

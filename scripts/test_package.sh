@@ -9,11 +9,11 @@ case "$1" in
         DEBIAN_FRONTEND=noninteractive apt-get install -y /release/*.deb python3-pil python3-xlib xvfb dbus-x11 mesa-vulkan-drivers desktop-file-utils
         ;;
     rpm)
-        dnf install -y --allowerasing --setopt=install_weak_deps=False /release/*.rpm python3-pillow python3-xlib xorg-x11-server-Xvfb mesa-dri-drivers mesa-vulkan-drivers dbus-daemon desktop-file-utils
+        dnf install -y --allowerasing --disablerepo=fedora-cisco-openh264 --setopt=install_weak_deps=False --setopt=timeout=30 --setopt=minrate=10000 --setopt=retries=3 /release/*.rpm python3-pillow python3-xlib xorg-x11-server-Xvfb mesa-dri-drivers mesa-vulkan-drivers dbus-daemon desktop-file-utils
         ;;
     arch)
         pacman -Syu --noconfirm
-        pacman -S --needed --noconfirm glibc gcc-libs libxkbcommon wayland libglvnd fontconfig python curl python-pillow python-xlib xorg-server-xvfb mesa vulkan-swrast dbus desktop-file-utils
+        pacman -S --needed --noconfirm glibc gcc-libs libxkbcommon libxkbcommon-x11 wayland libglvnd fontconfig libx11 libxcb libxi python curl python-pillow python-xlib xorg-server-xvfb mesa vulkan-swrast dbus desktop-file-utils
         pacman -U --noconfirm /release/*.pkg.tar.zst
         ;;
     *) exit 2 ;;
@@ -24,7 +24,7 @@ case "$1" in
     rpm) rpm -V cosmic-forge ;;
     arch) pacman -Qkk cosmic-forge ;;
 esac
-useradd --create-home forge
+id -u forge >/dev/null 2>&1 || useradd --uid 60000 --create-home forge
 mkdir -p /results
 chmod 777 /results
 runuser -u forge -- python3 /src/tests/qa_release.py --binary /usr/bin/cosmic-forge --output /results/gui

@@ -17,11 +17,11 @@ spec.loader.exec_module(installer)
 
 
 class ReleaseTests(unittest.TestCase):
-    def release(self, data=b'archive'):
-        return {'tag_name':'v0.9.0','assets':[{
-            'name':'cosmic-forge-0.9.0-linux-x86_64.tar.xz','size':len(data),
+    def release(self, data=b'archive', version='0.9.0', arch='x86_64'):
+        return {'tag_name':'v'+version,'assets':[{
+            'name':f'cosmic-forge-{version}-linux-{arch}.tar.xz','size':len(data),
             'digest':'sha256:'+hashlib.sha256(data).hexdigest(),
-            'browser_download_url':'https://github.com/motixo/cosmic-forge/releases/download/v0.9.0/cosmic-forge-0.9.0-linux-x86_64.tar.xz'}]}
+            'browser_download_url':f'https://github.com/motixo/cosmic-forge/releases/download/v{version}/cosmic-forge-{version}-linux-{arch}.tar.xz'}]}
 
     def test_wrong_repository_tag_size_or_digest_stops_before_download(self):
         installer.asset(self.release(), 'x86_64')
@@ -71,6 +71,32 @@ class ReleaseTests(unittest.TestCase):
                 execute.assert_not_called()
             self.assertEqual(prefs.read_text(),'keep')
             self.assertFalse((root/'prefix').exists())
+
+    @unittest.skipUnless((ROOT/'target/release/cosmic-forge').exists(),'Build the native executable first')
+    def test_verified_portable_release_installs_updates_and_removes_only_forge(self):
+        spec=importlib.util.spec_from_file_location('package_release',ROOT/'scripts/package_release.py')
+        packager=importlib.util.module_from_spec(spec);spec.loader.exec_module(packager)
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);prefix=root/'prefix';(prefix/'bin').mkdir(parents=True)
+            compositor=prefix/'bin/cosmic-comp';compositor.write_text('preserve compositor')
+            settings=prefix/'bin/cosmic-settings';settings.write_text('preserve Settings')
+            arch=installer.platform.machine()
+            packager.portable(ROOT/'target/release/cosmic-forge',root,arch)
+            data=(root/f'cosmic-forge-{packager.VERSION}-linux-{arch}.tar.xz').read_bytes()
+            def download(url,path,maximum):
+                path.write_bytes(json.dumps(self.release(data,packager.VERSION,arch)).encode() if url==installer.API else data)
+            with patch.object(installer,'download',side_effect=download), \
+                 patch.object(installer.os,'geteuid',return_value=1000), \
+                 patch.object(installer.platform,'freedesktop_os_release',return_value={'ID':'ubuntu'}), \
+                 patch.object(installer.platform,'machine',return_value=arch), \
+                 patch.object(installer.os,'confstr',return_value='glibc 2.39'):
+                installer.install(prefix)
+                self.assertTrue((prefix/'bin/cosmic-forge').exists())
+                installer.install(prefix)
+                installer.install(prefix,uninstall=True)
+            self.assertFalse((prefix/'bin/cosmic-forge').exists())
+            self.assertEqual(compositor.read_text(),'preserve compositor')
+            self.assertEqual(settings.read_text(),'preserve Settings')
 
 
 if __name__ == '__main__':

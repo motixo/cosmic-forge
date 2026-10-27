@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh
 ```
 
 Preferences and engine installations are retained. Application installation adds
-only Forge; install optional engines from **Settings → Engine** and sign out and
+only Forge; install optional engines from **Settings → Patches** and sign out and
 back in after engine installation. Prebuilt engine pins currently cover COSMIC
 1.10/1.11; lock screen binaries require glibc 2.39+.
 

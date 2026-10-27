@@ -88,7 +88,7 @@ Priority: optional
 Architecture: {ARCHES[arch][0]}
 Maintainer: motixo <motixo@users.noreply.github.com>
 Homepage: https://github.com/motixo/cosmic-forge
-Depends: libc6 (>= 2.35), libgcc-s1, libxkbcommon0, libwayland-client0, libwayland-egl1, libegl1, libfontconfig1, python3 (>= 3.11), curl
+Depends: libc6 (>= 2.35), libgcc-s1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, libegl1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxi6, python3 (>= 3.11), curl
 Recommends: libvulkan1, xdg-desktop-portal
 Description: Native mod manager for the COSMIC desktop
  Manage glass effects, panel and dock mods, and lock screen mods.
@@ -112,7 +112,7 @@ Summary: Native mod manager for the COSMIC desktop
 License: GPL-3.0-only
 URL: https://github.com/motixo/cosmic-forge
 BuildArch: {arch}
-Requires: glibc >= 2.35, libgcc, libxkbcommon, wayland-libs, libglvnd-egl, fontconfig, python3 >= 3.11, curl
+Requires: glibc >= 2.35, libgcc, libxkbcommon, libxkbcommon-x11, libwayland-client, libwayland-egl, libglvnd-egl, fontconfig, libX11, libX11-xcb, libxcb, libXi, python3 >= 3.11, curl
 Recommends: vulkan-loader, xdg-desktop-portal
 %global debug_package %{{nil}}
 %global __os_install_post %{{nil}}
@@ -150,9 +150,13 @@ license = GPL-3.0-only
 depend = glibc>=2.35
 depend = gcc-libs
 depend = libxkbcommon
+depend = libxkbcommon-x11
 depend = wayland
 depend = libglvnd
 depend = fontconfig
+depend = libx11
+depend = libxcb
+depend = libxi
 depend = python>=3.11
 depend = curl
 optdepend = vulkan-icd-loader: Vulkan rendering
