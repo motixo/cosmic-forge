@@ -1,0 +1,8 @@
+{
+  "renderer_revision": 1,
+  "upstream": "https://github.com/pop-os/cosmic-comp.git",
+  "sources": {
+    "1.10.0": "41497b42d9744d9963c4c6d17e8add49489b45ee",
+    "1.11.0": "8cb1802caada438bb5cc7670dfabdaca5fad0502"
+  }
+}

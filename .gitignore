@@ -1,0 +1,10 @@
+/target/
+/build/
+/engine/build/
+__pycache__/
+*.pyc
+
+AGENTS.md
+.agents/
+/docs/*
+!/docs/adding-effects.md

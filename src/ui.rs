@@ -1,0 +1,736 @@
+// SPDX-License-Identifier: GPL-3.0-only
+use cosmic::{
+    Core,
+    app::{CosmicFlags, Task},
+    iced::{self, Length, Subscription},
+    prelude::*,
+    widget::{self, button, nav_bar, settings, text},
+};
+use cosmic_forge::{
+    APP_ID, VERSION,
+    catalog::{self, Control, ControlKind, Effect},
+    engine, packs,
+    store::{self, CATEGORIES, Fingerprint, Store, xdg},
+};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
+
+pub struct Flags;
+impl CosmicFlags for Flags {
+    type SubCommand = String;
+    type Args = Vec<String>;
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Page {
+    Effect(usize),
+    Surfaces,
+}
+#[derive(Clone, Debug)]
+pub enum Message {
+    Value(usize, Value),
+    Flush,
+    Category(&'static str, bool),
+    Surfaces,
+    Reset,
+    About(bool),
+    Repository,
+    DismissEngine,
+    EngineSettings,
+    Folder,
+    Import,
+    Imported(Option<Result<Vec<std::path::PathBuf>, String>>),
+    RemoveEffect,
+    InstallEngine,
+    RestoreEngine,
+    CheckUpdates,
+    Tick,
+    Exit,
+}
+
+enum TransferEvent {
+    Progress(engine::Progress),
+    Finished(Result<String, String>),
+}
+
+pub struct Forge {
+    core: Core,
+    nav: nav_bar::Model,
+    effects: Vec<Effect>,
+    page: Page,
+    store: Store,
+    state: Fingerprint,
+    pending: BTreeMap<String, (Control, Value)>,
+    changed: Instant,
+    polled: Instant,
+    error: Option<String>,
+    about: bool,
+    needs_engine: bool,
+    theme_dirty: bool,
+    status: &'static str,
+    engine_note: Option<&'static str>,
+    transfer: Option<std::sync::mpsc::Receiver<TransferEvent>>,
+    engine_progress: Option<engine::Progress>,
+    update_note: String,
+    checked: Instant,
+    catalog_stamp: u64,
+}
+
+impl Forge {
+    fn remove_effect(&mut self) -> anyhow::Result<()> {
+        let Page::Effect(index) = self.page else {
+            anyhow::bail!("Select an imported effect first");
+        };
+        let effect = self.effects[index].clone();
+        let pack_id = effect
+            .pack_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Built-in effects cannot be removed"))?;
+        let active = self.store.selected() == effect.id;
+        if active {
+            self.store.select_effect(
+                self.effects
+                    .iter()
+                    .find(|e| e.id == "frosted")
+                    .expect("Built-in Frosted Glass"),
+            )?;
+        }
+        if let Err(error) = packs::remove_effect(&packs::root(), pack_id, &effect.id) {
+            if active {
+                self.store.undo()?;
+            }
+            return Err(error);
+        }
+        self.reload_effects()
+    }
+    fn check_updates(&mut self) {
+        if self.transfer.is_none() {
+            self.engine_progress = None;
+        }
+        self.checked = Instant::now();
+        self.start_transfer("Checking GitHub for glass effects…", |_| {
+            packs::update(&packs::root())
+        });
+    }
+    fn start_transfer(
+        &mut self,
+        note: &str,
+        work: impl FnOnce(std::sync::mpsc::Sender<TransferEvent>) -> anyhow::Result<String>
+        + Send
+        + 'static,
+    ) {
+        if self.transfer.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.transfer = Some(receiver);
+        self.update_note = note.into();
+        std::thread::spawn(move || {
+            let result = work(sender.clone()).map_err(|e| format!("{e:#}"));
+            let _ = sender.send(TransferEvent::Finished(result));
+        });
+    }
+    fn start_engine(&mut self, restore: bool) {
+        if self.transfer.is_some() {
+            return;
+        }
+        self.engine_progress = Some(engine::Progress::Checking);
+        self.start_transfer("Checking the glass renderer…", move |sender| {
+            engine::setup(restore, |progress| {
+                let _ = sender.send(TransferEvent::Progress(progress));
+            })
+        });
+    }
+    fn reload_effects(&mut self) -> anyhow::Result<()> {
+        let effects = catalog::load(&packs::root().join("effects"))?;
+        if !self.flush() {
+            anyhow::bail!("Could not save pending controls");
+        }
+        self.effects = effects;
+        self.catalog_stamp = packs::fingerprint(&packs::root());
+        self.nav = nav_bar::Model::default();
+        for (index, effect) in self.effects.iter().enumerate() {
+            self.nav
+                .insert()
+                .text(effect.name.clone())
+                .data(Page::Effect(index));
+        }
+        if let Some(effect) = self
+            .effects
+            .iter()
+            .find(|e| e.id == self.store.selected() && store::effect_available(e))
+        {
+            self.store.select_effect(effect)?;
+        }
+        self.refresh();
+        self.sync_selection();
+        Ok(())
+    }
+    fn refresh(&mut self) {
+        let state = self.store.fingerprint(&self.effects);
+        self.theme_dirty |=
+            state.material != self.state.material || state.categories != self.state.categories;
+        self.state = state;
+    }
+    fn report<T>(&mut self, result: anyhow::Result<T>) -> bool {
+        match result {
+            Ok(_) => {
+                self.error = None;
+                self.refresh();
+                true
+            }
+            Err(error) => {
+                self.error = Some(format!("{error:#}"));
+                false
+            }
+        }
+    }
+    fn flush(&mut self) -> bool {
+        if self.pending.is_empty() {
+            return true;
+        }
+        let result = (|| {
+            let changes = self
+                .store
+                .controls_changes(self.pending.values().map(|(c, v)| (c, v)))?;
+            self.store.commit(changes, "Adjust effect")
+        })();
+        if self.report(result) {
+            self.pending.clear();
+            true
+        } else {
+            false
+        }
+    }
+    fn value(&self, control: &Control) -> Value {
+        self.pending
+            .get(&control.key)
+            .map(|v| v.1.clone())
+            .unwrap_or_else(|| self.store.value(control))
+    }
+    fn sync_selection(&mut self) {
+        if matches!(self.page, Page::Effect(_)) {
+            let index = self
+                .effects
+                .iter()
+                .position(|e| e.id == self.state.selected)
+                .unwrap_or(0);
+            self.page = Page::Effect(index);
+            self.nav.activate_position(index as u16);
+        }
+    }
+    fn effect_view(&self, index: usize) -> Element<'_, Message> {
+        let effect = &self.effects[index];
+        let mut section = settings::section().title("Appearance");
+        for (i, control) in effect.controls.iter().enumerate() {
+            match control.kind {
+                ControlKind::Boolean => {
+                    section = section.add(
+                        settings::item::builder(control.label.as_str())
+                            .description(control.description.as_str())
+                            .toggler(self.value(control).as_bool().unwrap_or(false), move |v| {
+                                Message::Value(i, json!(v))
+                            }),
+                    )
+                }
+                ControlKind::Integer => {
+                    let value = self
+                        .value(control)
+                        .as_i64()
+                        .unwrap_or(i64::from(control.min)) as i32;
+                    let label = if control.key == "frosted" {
+                        format!("{} / 13", value)
+                    } else {
+                        format!("{}{}", value, control.unit)
+                    };
+                    let slider = widget::slider(control.min..=control.max, value, move |v| {
+                        Message::Value(i, json!(v))
+                    })
+                    .step(1)
+                    .on_release(Message::Flush)
+                    .width(Length::Fill);
+                    let spin = widget::spin_button(
+                        label,
+                        control.label.clone(),
+                        value,
+                        1,
+                        control.min,
+                        control.max,
+                        move |v| Message::Value(i, json!(v)),
+                    );
+                    let heading = settings::item::builder(control.label.as_str())
+                        .description(control.description.as_str())
+                        .control(spin);
+                    section = section.add(
+                        widget::column::with_capacity(8)
+                            .spacing(12)
+                            .push(heading)
+                            .push(slider),
+                    );
+                }
+            }
+        }
+        let mut actions = widget::row::with_capacity(3);
+        if effect.pack_id.is_some() {
+            actions =
+                actions.push(button::destructive("Remove effect").on_press(Message::RemoveEffect));
+        }
+        actions = actions
+            .push(iced::widget::space::horizontal())
+            .push(button::standard("Reset controls").on_press(Message::Reset));
+        widget::column::with_capacity(8)
+            .spacing(18)
+            .push(text::title2(effect.name.as_str()))
+            .push(text::body(effect.tagline.as_str()))
+            .push(text::body(effect.description.as_str()))
+            .push(section)
+            .push(actions)
+            .into()
+    }
+    fn surfaces_view(&self) -> Element<'_, Message> {
+        let mut section = settings::section().title("Glass surfaces")
+            .add(text::body("Choose where your selected effect appears. These choices follow both light and dark themes."));
+        for (key, label, description) in CATEGORIES {
+            section = section.add(
+                settings::item::builder(label)
+                    .description(description)
+                    .toggler(self.store.category(key), move |v| Message::Category(key, v)),
+            );
+        }
+        let mut install = button::standard("Install / update glass renderer");
+        let mut restore = button::standard("Restore original COSMIC compositor");
+        if self.transfer.is_none() {
+            install = install.on_press(Message::InstallEngine);
+            restore = restore.on_press(Message::RestoreEngine);
+        }
+        let mut renderer = settings::section().title("Compositor")
+            .add(text::body("Requires COSMIC 1.10 or 1.11. Install the glass compositor, then sign out and back in. The first build can take several minutes."))
+            .add(install).add(restore);
+        if let Some(progress) = self.engine_progress {
+            let mut bar = widget::progress_bar::linear::Linear::new()
+                .width(Length::Fill)
+                .girth(6.0);
+            if progress.finished() {
+                bar = bar.progress(1.0);
+            }
+            renderer = renderer.add(
+                widget::column::with_capacity(2)
+                    .spacing(10)
+                    .push(text::body(progress.label()))
+                    .push(bar),
+            );
+        }
+        let effects = settings::section()
+            .title("Effects")
+            .add(text::body(
+                "Import glass effects and keep your shader packs up to date.",
+            ))
+            .add(button::standard("Import glass effect…").on_press(Message::Import))
+            .add(text::caption(
+                "Select a JSON pack, or select both a .frag file and its JSON settings.",
+            ))
+            .add(button::standard("Check for effect updates").on_press(Message::CheckUpdates))
+            .add(text::caption(self.update_note.as_str()))
+            .add(button::standard("Open effects folder").on_press(Message::Folder));
+        widget::column::with_capacity(5)
+            .spacing(24)
+            .push(text::title2("Settings"))
+            .push(section)
+            .push(text::caption(
+                "Window transparency also depends on the application and your COSMIC theme.",
+            ))
+            .push(effects)
+            .push(renderer)
+            .into()
+    }
+}
+
+impl cosmic::Application for Forge {
+    type Executor = cosmic::executor::Default;
+    type Flags = Flags;
+    type Message = Message;
+    const APP_ID: &'static str = APP_ID;
+    fn core(&self) -> &Core {
+        &self.core
+    }
+    fn core_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+    fn init(core: Core, _: Flags) -> (Self, Task<Message>) {
+        let folder = xdg("XDG_DATA_HOME", ".local/share").join("cosmic-forge/effects");
+        let (effects, mut error) = match catalog::load(&folder) {
+            Ok(effects) => (effects, None),
+            Err(error) => (
+                serde_json::from_str(include_str!("../shaders/effects.json"))
+                    .expect("Built-in catalog"),
+                Some(format!("Could not load extra effects: {error:#}")),
+            ),
+        };
+        let mut store = Store::default();
+        if let Some(effect) = effects
+            .iter()
+            .find(|e| e.id == store.selected() && e.shader.is_some() && store::effect_available(e))
+            && let Err(e) = store.select_effect(effect)
+        {
+            error = Some(format!("Could not activate glass pack: {e:#}"));
+        }
+        let state = store.fingerprint(&effects);
+        let index = effects
+            .iter()
+            .position(|e| e.id == state.selected)
+            .unwrap_or(0);
+        let mut nav = nav_bar::Model::default();
+        for (index, effect) in effects.iter().enumerate() {
+            nav.insert()
+                .text(effect.name.clone())
+                .data(Page::Effect(index));
+        }
+        nav.activate_position(index as u16);
+        let (status, engine_note) = store::engine_status();
+        let needs_engine = !store::effect_available(&effects[index]);
+        let mut app = Self {
+            core,
+            nav,
+            effects,
+            page: Page::Effect(index),
+            store,
+            state,
+            pending: BTreeMap::new(),
+            changed: Instant::now(),
+            polled: Instant::now(),
+            error,
+            about: false,
+            needs_engine,
+            theme_dirty: false,
+            status,
+            engine_note,
+            transfer: None,
+            engine_progress: None,
+            update_note: "Community packs can be installed from a JSON file.".into(),
+            checked: Instant::now(),
+            catalog_stamp: packs::fingerprint(&packs::root()),
+        };
+        app.set_header_title("COSMIC Forge".into());
+        if packs::due(&packs::root()) {
+            app.check_updates();
+        }
+        let task = app.set_window_title("COSMIC Forge".into(), app.core.main_window_id().unwrap());
+        (app, task)
+    }
+    fn nav_model(&self) -> Option<&nav_bar::Model> {
+        Some(&self.nav)
+    }
+    fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<Message> {
+        if !self.flush() {
+            return Task::none();
+        }
+        if let Some(page) = self.nav.data::<Page>(id).copied() {
+            if let Page::Effect(index) = page {
+                if !store::effect_available(&self.effects[index]) {
+                    self.needs_engine = true;
+                    return Task::none();
+                }
+                let result = self.store.select_effect(&self.effects[index]);
+                if !self.report(result) {
+                    return Task::none();
+                }
+            }
+            self.page = page;
+            self.nav.activate(id);
+        }
+        Task::none()
+    }
+    fn header_end(&self) -> Vec<Element<'_, Message>> {
+        vec![
+            button::icon(widget::icon::from_name("preferences-system-symbolic"))
+                .on_press(Message::Surfaces)
+                .into(),
+            button::icon(widget::icon::from_name("help-about-symbolic"))
+                .on_press(Message::About(true))
+                .into(),
+        ]
+    }
+    fn view(&self) -> Element<'_, Message> {
+        let content = match self.page {
+            Page::Effect(i) => self.effect_view(i),
+            Page::Surfaces => self.surfaces_view(),
+        };
+        widget::scrollable(
+            widget::container(content)
+                .max_width(880)
+                .padding(24)
+                .width(Length::Fill),
+        )
+        .height(Length::Fill)
+        .into()
+    }
+    fn footer(&self) -> Option<Element<'_, Message>> {
+        let runtime_note = (matches!(self.page, Page::Effect(index) if self.effects[index].shader.is_some()) && !packs::engine_active())
+            .then_some("This glass pack needs Forge renderer ABI 1. Install the new engine and sign in again.");
+        let native =
+            matches!(self.page, Page::Effect(index) if self.effects[index].id == "frosted");
+        let message = self
+            .error
+            .as_deref()
+            .or(if native {
+                None
+            } else {
+                runtime_note.or(self.engine_note)
+            })
+            .unwrap_or(if native {
+                "Live on your desktop"
+            } else {
+                self.status
+            });
+        Some(
+            widget::container(text::caption(message))
+                .padding([10, 24])
+                .width(Length::Fill)
+                .into(),
+        )
+    }
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        if self.needs_engine {
+            return Some(widget::dialog().title("Glass compositor required")
+                .body("To use this effect, install the glass compositor from Settings, then sign out and back in.")
+                .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
+                .secondary_action(button::standard("Cancel").on_press(Message::DismissEngine)).into());
+        }
+        self.about.then(|| {
+            widget::dialog()
+                .title("COSMIC Forge")
+                .body(format!("Version {VERSION}"))
+                .control(
+                    button::link("https://github.com/motixo/cosmic-forge")
+                        .on_press(Message::Repository),
+                )
+                .control(text::caption("GPL-3.0-only"))
+                .primary_action(button::suggested("Close").on_press(Message::About(false)))
+                .into()
+        })
+    }
+    fn on_escape(&mut self) -> Task<Message> {
+        self.about = false;
+        self.needs_engine = false;
+        Task::none()
+    }
+    fn on_app_exit(&mut self) -> Option<Message> {
+        Some(Message::Exit)
+    }
+    fn on_close_requested(&self, _: iced::window::Id) -> Option<Message> {
+        Some(Message::Exit)
+    }
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch([
+            iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
+            iced::event::listen_with(|event, status, _| {
+                if status == iced::event::Status::Captured {
+                    return None;
+                }
+                let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key,
+                    physical_key,
+                    modifiers,
+                    ..
+                }) = event
+                else {
+                    return None;
+                };
+                if modifiers.command() && !modifiers.shift() && !modifiers.alt() {
+                    match key.to_latin(physical_key) {
+                        Some('q') => Some(Message::Exit),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }),
+        ])
+    }
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::DismissEngine => self.needs_engine = false,
+            Message::Repository => {
+                let result = std::process::Command::new("xdg-open")
+                    .arg("https://github.com/motixo/cosmic-forge")
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(Into::into);
+                self.report(result);
+            }
+            Message::EngineSettings => {
+                if self.flush() {
+                    self.needs_engine = false;
+                    self.page = Page::Surfaces;
+                }
+            }
+            Message::Value(index, value) => {
+                if let Page::Effect(effect) = self.page {
+                    let control = self.effects[effect].controls[index].clone();
+                    self.pending.insert(control.key.clone(), (control, value));
+                    self.changed = Instant::now();
+                }
+            }
+            Message::Flush => {
+                self.flush();
+            }
+            Message::Tick => {
+                let events = self
+                    .transfer
+                    .as_ref()
+                    .map(|r| r.try_iter().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                for event in events {
+                    let TransferEvent::Finished(result) = event else {
+                        if let TransferEvent::Progress(progress) = event {
+                            self.engine_progress = Some(progress);
+                        }
+                        continue;
+                    };
+                    self.transfer = None;
+                    match result {
+                        Ok(note) => {
+                            self.update_note = note;
+                            (self.status, self.engine_note) = store::engine_status();
+                            if let Err(e) = self.reload_effects() {
+                                self.error = Some(format!("{e:#}"));
+                            }
+                        }
+                        Err(note) => {
+                            self.engine_progress = None;
+                            self.update_note = note;
+                        }
+                    }
+                }
+                if self.checked.elapsed() >= Duration::from_secs(packs::CHECK_INTERVAL) {
+                    self.check_updates();
+                }
+                if !self.pending.is_empty() && self.changed.elapsed() >= Duration::from_millis(180)
+                {
+                    self.flush();
+                }
+                if self.polled.elapsed() >= Duration::from_millis(900) && self.pending.is_empty() {
+                    if packs::fingerprint(&packs::root()) != self.catalog_stamp
+                        && let Err(e) = self.reload_effects()
+                    {
+                        self.catalog_stamp = packs::fingerprint(&packs::root());
+                        self.error = Some(format!("Could not reload effects: {e:#}"));
+                    }
+                    let state = self.store.fingerprint(&self.effects);
+                    if state != self.state {
+                        let theme_changed = state.dark != self.state.dark
+                            || state.accent != self.state.accent
+                            || state.material != self.state.material
+                            || state.categories != self.state.categories;
+                        self.state = state;
+                        self.sync_selection();
+                        self.theme_dirty |= theme_changed;
+                    }
+                    self.polled = Instant::now();
+                }
+            }
+            Message::Category(key, enabled) => {
+                if self.flush() {
+                    let result = self.store.set_category(key, enabled);
+                    self.report(result);
+                }
+            }
+            Message::Surfaces => {
+                if self.flush() {
+                    self.page = match self.page {
+                        Page::Surfaces => Page::Effect(0),
+                        Page::Effect(_) => Page::Surfaces,
+                    };
+                    self.sync_selection();
+                }
+            }
+            Message::Reset => {
+                if self.flush()
+                    && let Page::Effect(index) = self.page
+                {
+                    let result = self.store.reset(&self.effects[index]);
+                    self.report(result);
+                }
+            }
+            Message::About(show) => self.about = show,
+            Message::Folder => {
+                let folder = packs::root().join("packs");
+                let result = std::fs::create_dir_all(&folder)
+                    .and_then(|_| {
+                        std::process::Command::new("xdg-open")
+                            .arg(folder)
+                            .spawn()
+                            .map(|_| ())
+                    })
+                    .map_err(Into::into);
+                self.report(result);
+            }
+            Message::CheckUpdates => self.check_updates(),
+            Message::InstallEngine => self.start_engine(false),
+            Message::RestoreEngine => self.start_engine(true),
+            Message::Import => {
+                return cosmic::task::future(async {
+                    use cosmic::dialog::file_chooser;
+                    match file_chooser::open::Dialog::new()
+                        .title("Select a JSON pack or a .frag + JSON pair")
+                        .filter(
+                            file_chooser::FileFilter::new("Glass effect files")
+                                .glob("*.json")
+                                .glob("*.frag"),
+                        )
+                        .open_files()
+                        .await
+                    {
+                        Ok(files) => Message::Imported(Some(
+                            files
+                                .urls()
+                                .iter()
+                                .map(|url| {
+                                    url.to_file_path()
+                                        .map_err(|_| "Select local JSON and .frag files".into())
+                                })
+                                .collect(),
+                        )),
+                        Err(file_chooser::Error::Cancelled) => Message::Imported(None),
+                        Err(e) => Message::Imported(Some(Err(e.to_string()))),
+                    }
+                });
+            }
+            Message::Imported(Some(result)) => {
+                match result.and_then(|paths| {
+                    packs::import_files(&packs::root(), &paths).map_err(|e| format!("{e:#}"))
+                }) {
+                    Ok(note) => {
+                        self.error = None;
+                        self.update_note = note;
+                        if let Err(e) = self.reload_effects() {
+                            self.error = Some(format!("{e:#}"));
+                        }
+                    }
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            Message::Imported(None) => {}
+            Message::RemoveEffect => {
+                if self.flush() {
+                    let result = self.remove_effect();
+                    self.report(result);
+                }
+            }
+            Message::Exit => {
+                if self.flush() {
+                    return iced::exit();
+                }
+            }
+        }
+        if std::mem::take(&mut self.theme_dirty) {
+            return Task::done(cosmic::Action::Cosmic(cosmic::app::Action::AppThemeChange(
+                cosmic::theme::system_preference(),
+            )));
+        }
+        Task::none()
+    }
+}

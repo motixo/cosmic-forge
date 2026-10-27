@@ -1,0 +1,4 @@
+[submodule "shaders"]
+	path = shaders
+	url = https://github.com/motixo/cosmic-forge-shaders.git
+	branch = main
