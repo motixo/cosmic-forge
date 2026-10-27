@@ -14,8 +14,27 @@ try:
         s.click(980,294);s.scroll_to_bottom();s.click(450,683);s.key('a',True)
         for c in value:s.key(c,wait=.03)
         s.click(480,789)
-    s.click(100,322);color('red')
+    s.click(100,322)
+    def panel_files():
+        return {p:p.read_bytes() for d in (s.config/'cosmic').glob('com.system76.CosmicPanel.*') for p in d.rglob('*') if p.is_file()}
+    before=panel_files()
+    s.click(980,294);s.scroll_to_bottom()
+    s.click(450,500,wait=1.3)
+    assert panel_files()==before,'Canvas click applied the color before Apply'
+    s.click(580,632,wait=1.3)
+    assert panel_files()==before,'Hue slider applied the color before Apply'
+    s.click(450,683);s.key('a',True)
+    for c in 'red':s.key(c,wait=.03)
+    s.key('Return',wait=1.3)
+    assert panel_files()==before,'Editing the color applied it before Apply'
+    s.capture('picker-draft-remains-open')
+    s.click(480,789)
     assert 'light:Some((1.0,0.0,0.0))' in colors('Panel')
+    before=panel_files()
+    s.click(980,294);s.scroll_to_bottom();s.click(450,500)
+    s.click(480,747)
+    assert panel_files()==before,'Cancel saved the draft color'
+    results['picker_edits_wait_for_apply_and_cancel_preserves_color']=True
     s.click(970,239);s.click(965,317);color('blue')
     assert 'light:Some((1.0,0.0,0.0))' in colors('Panel') and 'dark:Some((0.0,0.0,1.0))' in colors('Panel')
     s.click(380,348)
@@ -47,5 +66,5 @@ try:
     s.capture('new-preset-applied')
     results['catalog_reload_and_explicit_preset_without_rebuild']=True
     (s.path/'results.json').write_text(json.dumps(results,indent=2)+'\n')
-    print('PASS native panel picker; per-theme reset; profiles; Penumbra; dynamic catalog and preset')
+    print('PASS picker drafts, Apply and Cancel; per-theme reset; profiles; Penumbra; dynamic catalog and preset')
 finally:s.close()

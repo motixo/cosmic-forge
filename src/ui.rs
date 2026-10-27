@@ -1335,8 +1335,12 @@ impl cosmic::Application for Forge {
             }
             Message::PanelColor(update) => {
                 use widget::color_picker::ColorPickerUpdate as U;
+                // libcosmic also emits this on canvas and hue slider releases.
+                if matches!(update, U::ActionFinished) {
+                    return Task::none();
+                }
                 let reset = matches!(update, U::Reset);
-                let apply = matches!(update, U::AppliedColor | U::ActionFinished);
+                let apply = matches!(update, U::AppliedColor);
                 let task = self.color_picker.update::<Message>(update);
                 if reset {
                     self.save_panel_color(None);
