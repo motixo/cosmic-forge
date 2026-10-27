@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Check engine Install/Build buttons with an isolated release/worker fixture."""
+"""Check engine Install buttons with an isolated release/worker fixture."""
 import argparse
 import hashlib
 import json
@@ -16,9 +16,9 @@ from qa_native import ROOT, Session
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/cosmic-forge')
-    parser.add_argument('--component', choices=['compositor', 'greeter'], default='compositor')
+    parser.add_argument('--component', choices=['compositor', 'panel', 'greeter'], default='compositor')
     args = parser.parse_args()
-    button_y = 796 if args.component == 'greeter' else 514
+    button_y = {'compositor':514, 'panel':657, 'greeter':796}[args.component]
     artifacts = ROOT / ('build/qa-' + args.component + '-actions')
     artifacts.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='forge-actions-', dir=ROOT / 'build') as temporary:
@@ -43,7 +43,7 @@ print('FORGE_PROGRESS:already_installed',flush=True)
 '''
         bundle = json.dumps({'format': 1, 'abi': 1, 'files': {
             'install.py': worker, 'build.py': '', 'recovery.py': '',
-            'release.json': '{"abi":1,"renderer_revision":2}', 'greeter/install.py': ''}}).encode()
+            'release.json': '{"abi":1,"renderer_revision":2}', 'panel/install.py': '', 'greeter/install.py': ''}}).encode()
         url = 'https://github.com/motixo/cosmic-forge-engine/releases/download/engine-ui-actions/cosmic-forge-engine.json'
         metadata = {'tag_name': 'engine-ui-actions', 'assets': [{'name': 'cosmic-forge-engine.json',
             'size': len(bundle), 'digest': 'sha256:' + hashlib.sha256(bundle).hexdigest(), 'browser_download_url': url}]}
@@ -66,14 +66,13 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             audit = state / 'action-audit.jsonl'
             session.click(856, 24)
             session.scroll_to_top()
-            session.capture('two-buttons').save(artifacts / 'two-buttons.png')
-            for index, (x, y, build) in enumerate([(420, button_y, False), (600, button_y, True)], start=1):
-                log = state / ('greeter-build.log' if args.component == 'greeter' else 'engine-build.log')
+            session.capture('install-only').save(artifacts / 'install-only.png')
+            for index in (1, 2):
+                log = state / (('engine' if args.component == 'compositor' else args.component) + '-build.log')
                 log.unlink(missing_ok=True)
-                session.click(x, y, wait=0.5)
+                session.click(420, button_y, wait=0.5)
                 session.scroll_to_top()
-                session.capture('build-progress' if build else 'download-progress').save(
-                    artifacts / ('build-progress.png' if build else 'download-progress.png'))
+                session.capture('download-progress').save(artifacts / 'download-progress.png')
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     if audit.exists() and len(audit.read_text().splitlines()) == index and log.exists() and \
@@ -81,12 +80,15 @@ print('FORGE_PROGRESS:already_installed',flush=True)
                         break
                     time.sleep(0.1)
                 else:
-                    raise AssertionError('Compositor button did not invoke its worker: ' + str((x, y)))
+                    raise AssertionError('Install button did not invoke its worker: ' + args.component)
                 call = json.loads(audit.read_text().splitlines()[-1])
-                assert call == {'build': build, 'tag': 'engine-ui-actions', 'component': args.component}, call
-                stage = 'building' if build else 'downloading_binary'
-                assert 'FORGE_PROGRESS:' + stage in log.read_text()
+                assert call == {'build': False, 'tag': 'engine-ui-actions', 'component': args.component}, call
+                assert 'FORGE_PROGRESS:downloading_binary' in log.read_text()
+                assert 'FORGE_PROGRESS:building' not in log.read_text()
                 time.sleep(0.3)
+            # Clicking the former Build button must not start another worker.
+            session.click(540 if args.component == 'panel' else 600, button_y)
+            assert len(audit.read_text().splitlines()) == 2,'A removed Build button still runs'
             log.unlink()
             session.click(420, button_y)
             deadline = time.monotonic() + 10
@@ -99,9 +101,9 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             time.sleep(0.5)
             session.scroll_to_top()
             session.capture('compositor-error').save(artifacts / 'compositor-error.png')
-            (artifacts / 'results.json').write_text(json.dumps({'install_downloads': True, 'build_is_explicit': True,
+            (artifacts / 'results.json').write_text(json.dumps({'install_downloads': True, 'build_removed': True,
                                                                'same_release_tag': True}, indent=2) + '\n')
-            print('PASS separate native Install/Build buttons and progress; release tag preserved')
+            print('PASS native Install button and progress; Build removed; release tag preserved')
         finally:
             session.close()
 

@@ -423,45 +423,33 @@ impl Forge {
         }
     }
     fn engine_component_view(&self, component: engine::Component) -> Element<'_, Message> {
-        let (install_label, build_label, restore_label, note) = match component {
+        let (install_label, restore_label, note) = match component {
             engine::Component::Compositor => (
                 "Install compositor",
-                "Build compositor",
                 "Restore original COSMIC compositor",
                 self.renderer_note.as_str(),
             ),
             engine::Component::Greeter => (
                 "Install lock screen",
-                "Build lock screen",
                 "Restore original COSMIC lock screen",
                 self.greeter_note.as_str(),
             ),
             engine::Component::Panel => (
                 "Install panel",
-                "Build panel",
                 "Restore original COSMIC panel",
                 self.panel_note.as_str(),
             ),
         };
         let mut install = button::standard(install_label);
-        let mut build = button::standard(build_label);
         let mut restore = button::standard(restore_label);
         if self.transfer.is_none() {
             install = install.on_press(Message::Engine(component, engine::Action::Install));
-            build = build.on_press(Message::Engine(component, engine::Action::Build));
             restore = restore.on_press(Message::Engine(component, engine::Action::Restore));
         }
         let mut content = widget::column::with_capacity(6)
             .spacing(16)
             .push(text::heading(component.label()))
-            .push(
-                widget::row::with_capacity(3)
-                    .spacing(12)
-                    .align_y(iced::Alignment::Center)
-                    .push(install)
-                    .push(text::body("or"))
-                    .push(build),
-            )
+            .push(install)
             .push(restore);
         let progress = self
             .engine_progress
@@ -619,7 +607,7 @@ impl Forge {
             match c.kind {
                 mods::Kind::Image => {
                     content = content.push(text::body(if config.wallpaper.is_some() {
-                        "Using a separate lock screen image"
+                        "Using a separate lock screen wallpaper"
                     } else {
                         "Using desktop wallpaper"
                     }));
@@ -639,6 +627,16 @@ impl Forge {
                     );
                     if self.importing_image {
                         content = content.push(text::caption("Importing image…"));
+                    }
+                    if let Some(path) = &config.wallpaper {
+                        content = content.push(
+                            widget::image(path.clone())
+                                .name("Selected lock screen wallpaper")
+                                .width(Length::Fill)
+                                .height(220)
+                                .content_fit(iced::ContentFit::Contain)
+                                .border_radius(8),
+                        );
                     }
                 }
                 mods::Kind::Boolean => {
@@ -786,7 +784,7 @@ impl Forge {
                 settings::section().title("Engine").add(
                     widget::column::with_capacity(4)
                         .spacing(24)
-                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install prebuilt binaries or build from source, then sign out and back in."))
+                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install prebuilt binaries, then sign out and back in."))
                         .push(self.engine_component_view(engine::Component::Compositor))
                         .push(self.engine_component_view(engine::Component::Panel))
                         .push(self.engine_component_view(engine::Component::Greeter)),
@@ -1268,7 +1266,7 @@ impl cosmic::Application for Forge {
                     return cosmic::task::future(async {
                         use cosmic::dialog::file_chooser;
                         let files = file_chooser::open::Dialog::new()
-                            .title("Choose lock screen background")
+                            .title("Choose lock screen wallpaper")
                             .filter(
                                 file_chooser::FileFilter::new("Images")
                                     .glob("*.png")

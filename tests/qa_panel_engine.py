@@ -31,7 +31,7 @@ try:
     assert prefs=={p:p.read_bytes() for p in s.config.rglob('*') if p.is_file()}
     before={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in [record,launcher,binary]}
     s.capture('panel-installed');log.unlink()
-    s.scroll_to_top();s.click(540,657);wait_for('already_installed')
+    s.scroll_to_top();s.click(400,657);wait_for('already_installed')
     assert 'FORGE_PROGRESS:building' not in log.read_text()
     assert before=={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before}
     s.capture('matching-panel-skipped')
@@ -43,6 +43,6 @@ try:
     assert settings.read_text()=='preserve Settings' and compositor.read_text()=='preserve compositor'
     assert prefs=={p:p.read_bytes() for p in s.config.rglob('*') if p.is_file()}
     s.capture('original-panel-restored')
-    (s.path/'results.json').write_text(json.dumps({'released_panel_download':True,'build_skips_matching_install':True,'offline_stock_recovery':True,'compositor_settings_preferences_preserved':True},indent=2))
-    print('PASS released panel install; matching Build skipped; embedded stock Restore; compositor/Settings/preferences preserved')
+    (s.path/'results.json').write_text(json.dumps({'released_panel_download':True,'install_skips_matching_install':True,'offline_stock_recovery':True,'compositor_settings_preferences_preserved':True},indent=2))
+    print('PASS released panel install; matching Install skipped; embedded stock Restore; compositor/Settings/preferences preserved')
 finally:s.close()

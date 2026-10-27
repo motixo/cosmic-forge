@@ -1,7 +1,7 @@
 # COSMIC Forge
 
 A native mod manager for the **COSMIC desktop**. Currently supports glass shader
-effects, Penumbra, theme-aware panel colors, and separate lock screen backgrounds
+effects, Penumbra, theme-aware panel colors, and separate lock screen wallpapers
 and a media player widget.
 The sidebar groups Shaders, Panel & Dock and Lock screen.
 
@@ -28,10 +28,10 @@ cosmic-forge
 
 Supports Arch Linux, Fedora, Ubuntu and Pop!_OS with tested COSMIC releases from
 1.10 onward (currently 1.10/1.11). In Settings, **Install compositor** downloads a
-verified prebuilt binary; **Build compositor** builds pinned source. Prebuilt
+verified prebuilt binary. Prebuilt
 compositor/panel binaries support x86_64/ARM64 with glibc 2.35+; lock screen binaries
-require glibc 2.39+ (Ubuntu/Pop!_OS 24.04+, current Arch/Fedora). Lock screen Settings
-includes Install, Build and Restore; system Settings and login greeter are preserved.
+require glibc 2.39+ (Ubuntu/Pop!_OS 24.04+, current Arch/Fedora). Settings provides
+Install and Restore for each engine; system Settings and login greeter are preserved.
 Sign out and back in after engine installation.
 
 [Adding effects](docs/adding-effects.md) · GPL-3.0-only

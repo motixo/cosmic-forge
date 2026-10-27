@@ -61,12 +61,22 @@ try:
     source.unlink()
     assert Image.open(copies[0]).getpixel((0,0)) == (30,160,80)
     assert (locker/'media_enabled').read_text().strip() == 'true'
-    s.capture('background-custom')
+    preview = s.capture('background-custom')
+    assert preview.getpixel((664,350))[:3] == (30,160,80),'Selected background preview is missing'
+    # Replacing the image must update the preview rather than reuse the old texture.
+    Image.new('RGB',(80,32),(190,40,70)).save(source)
+    s.click(385,227)
+    wait_for(lambda:(locker/'wallpaper').read_text()!=selected,'New image did not replace the wallpaper')
+    selected = (locker/'wallpaper').read_text()
+    source.unlink()
+    time.sleep(.5)
+    assert s.capture('background-replaced').getpixel((664,350))[:3] == (190,40,70)
     s.click(100,450);s.click(984,192)
     assert (locker/'media_enabled').read_text().strip() == 'false'
     assert (locker/'wallpaper').read_text() == selected
     s.click(100,410);s.click(550,227)
     assert (locker/'wallpaper').read_text().strip() == 'None'
+    assert s.capture('background-follow-desktop').getpixel((664,350))[:3] != (190,40,70)
     assert copies[0].exists()
     assert (locker/'media_enabled').read_text().strip() == 'false'
     # Cancellation and decode failures must preserve the current preferences.
@@ -89,8 +99,8 @@ try:
     after = files(s.config)
     assert all(after[name] == value for name,value in before.items())
     assert all(name in before or name.startswith('cosmic/com.system76.CosmicLockscreen/') for name in after)
-    (s.path/'results.json').write_text(json.dumps({'separate_mods':True,'missing_engine_inline':True,'native_media_toggle':True,'file_portal_import':True,'independent_background':True,'source_removal_safe':True,'follow_desktop':True,'cancel_and_invalid_preserve_preferences':True,'catalog_reorder':True},indent=2)+'\n')
-    print('PASS independent lock screen mods; engine gate; native toggle; image import/cancel/errors; persistent copy; preferences')
+    (s.path/'results.json').write_text(json.dumps({'separate_mods':True,'missing_engine_inline':True,'native_media_toggle':True,'file_portal_import':True,'independent_background':True,'source_removal_safe':True,'selected_image_preview':True,'replacement_preview':True,'follow_desktop':True,'cancel_and_invalid_preserve_preferences':True,'catalog_reorder':True},indent=2)+'\n')
+    print('PASS independent lock screen mods; engine gate; native toggle; image import/cancel/errors; persistent copy; preview updates; preferences')
 finally:
     if portal is not None:
         portal.terminate();portal.wait(timeout=5)

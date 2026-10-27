@@ -205,17 +205,18 @@ at runtime. The Install action downloads an XZ-compressed prebuilt executable ma
 COSMIC and the CPU architecture. It requires Python 3, curl, glibc 2.35+ and the
 COSMIC runtime libraries. The asset repository, SHA-256, size, decompression limit,
 ELF architecture and embedded revision are checked before installation. A missing
-or incompatible binary reports an error and suggests **Build compositor**.
+or incompatible binary reports an error without starting a source build.
 
-The separate **Build compositor** action downloads pinned upstream source and
-Cargo dependencies and requires Python 3, Rust, Git and the compositor build
+To compile from source, run `python3 install.py --build` in the engine repository.
+This downloads pinned upstream source and Cargo dependencies and requires
+Python 3, Rust, Git and the compositor build
 libraries. Build caches are shared across engine releases at
 `$XDG_CACHE_HOME/cosmic-forge/engine-target/<version>`. The app never silently
 starts a source build from the Install action. Both methods recheck the captured
 COSMIC packages before changing the launcher. Build progress is logged to
 `$XDG_STATE_HOME/cosmic-forge/engine-build.log`. The operation runs in the background
 and never stops the current session. A native progress bar shows the current stage
-(downloading the engine package or binary, checking, preparing source, compiling, installing or restoring). Download/compile
+(downloading the engine package or binary, checking, installing or restoring). Download
 phases use an animated bar because their duration is not known; completion fills
 the bar. After downloading the small engine package and before downloading a
 compositor, fetching upstream source or compiling, Forge checks the renderer revision,
