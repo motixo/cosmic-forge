@@ -45,10 +45,10 @@ pub enum Message {
     Engine(engine::Component, engine::Action),
     LockScreen,
     Settings,
+    ApplyEffect,
     Reset,
     About(bool),
     Repository,
-    DismissEngine,
     DismissEngineUpdate,
     EngineSettings,
     Folder,
@@ -81,7 +81,6 @@ pub struct Forge {
     polled: Instant,
     error: Option<String>,
     about: bool,
-    needs_engine: bool,
     engine_updates: Vec<engine::Component>,
     show_engine_update: bool,
     theme_dirty: bool,
@@ -207,6 +206,18 @@ impl Forge {
         if !self.flush() {
             anyhow::bail!("Could not save pending controls");
         }
+        let remap = |page| match page {
+            Page::Effect(index) => Page::Effect(
+                effects
+                    .iter()
+                    .position(|e| e.id == self.effects[index].id)
+                    .or_else(|| effects.iter().position(|e| e.id == self.store.selected()))
+                    .unwrap_or(0),
+            ),
+            page => page,
+        };
+        self.page = remap(self.page);
+        self.settings_return = remap(self.settings_return);
         self.effects = effects;
         self.catalog_stamp = packs::fingerprint(&packs::root());
         self.nav = nav_bar::Model::default();
@@ -270,17 +281,6 @@ impl Forge {
             .unwrap_or_else(|| self.store.value(control))
     }
     fn sync_selection(&mut self) {
-        let index = self
-            .effects
-            .iter()
-            .position(|e| e.id == self.state.selected)
-            .unwrap_or(0);
-        if matches!(self.page, Page::Effect(_)) {
-            self.page = Page::Effect(index);
-        }
-        if matches!(self.settings_return, Page::Effect(_)) {
-            self.settings_return = Page::Effect(index);
-        }
         for model in [&mut self.nav, &mut self.panel_nav, &mut self.lock_nav] {
             let active = model.active();
             widget::segmented_button::Selectable::deactivate(model, active);
@@ -389,19 +389,17 @@ impl Forge {
         }
     }
     fn engine_component_view(&self, component: engine::Component) -> Element<'_, Message> {
-        let (install_label, build_label, restore_label, name, note) = match component {
+        let (install_label, build_label, restore_label, note) = match component {
             engine::Component::Compositor => (
                 "Install compositor",
                 "Build compositor",
                 "Restore original COSMIC compositor",
-                "compositor",
                 self.renderer_note.as_str(),
             ),
             engine::Component::Panel => (
                 "Install panel",
                 "Build panel",
                 "Restore original COSMIC panel",
-                "panel",
                 self.panel_note.as_str(),
             ),
         };
@@ -413,10 +411,17 @@ impl Forge {
             build = build.on_press(Message::Engine(component, engine::Action::Build));
             restore = restore.on_press(Message::Engine(component, engine::Action::Restore));
         }
-        let mut content=widget::column::with_capacity(6).spacing(16)
+        let mut content = widget::column::with_capacity(6)
+            .spacing(16)
             .push(text::heading(component.label()))
-            .push(text::body(format!("Requires a supported COSMIC release from 1.10 onward. Install a prebuilt {name} or build from source, then sign out and back in.")))
-            .push(widget::row::with_capacity(3).spacing(12).align_y(iced::Alignment::Center).push(install).push(text::body("or")).push(build))
+            .push(
+                widget::row::with_capacity(3)
+                    .spacing(12)
+                    .align_y(iced::Alignment::Center)
+                    .push(install)
+                    .push(text::body("or"))
+                    .push(build),
+            )
             .push(restore);
         let progress = self
             .engine_progress
@@ -564,6 +569,30 @@ impl Forge {
     }
     fn effect_view(&self, index: usize) -> Element<'_, Message> {
         let effect = &self.effects[index];
+        let mut content = widget::column::with_capacity(8)
+            .spacing(18)
+            .push(text::title2(effect.name.as_str()))
+            .push(text::body(effect.tagline.as_str()))
+            .push(text::body(effect.description.as_str()));
+        let available = store::effect_available(effect);
+        if !available || self.state.selected != effect.id {
+            content = if available {
+                content
+                    .push(text::body(
+                        "The compositor engine is ready. Apply this effect to start using it.",
+                    ))
+                    .push(button::suggested("Apply effect").on_press(Message::ApplyEffect))
+            } else {
+                content
+                    .push(text::body("Install or update the compositor engine in Settings, then sign out and back in to use this effect."))
+                    .push(button::suggested("Go to settings").on_press(Message::EngineSettings))
+            };
+            if effect.pack_id.is_some() {
+                content = content
+                    .push(button::destructive("Remove effect").on_press(Message::RemoveEffect));
+            }
+            return content.into();
+        }
         let mut section = settings::section().title("Appearance");
         for (i, control) in effect.controls.iter().enumerate() {
             match control.kind {
@@ -621,22 +650,13 @@ impl Forge {
         actions = actions
             .push(iced::widget::space::horizontal())
             .push(button::standard("Reset controls").on_press(Message::Reset));
-        widget::column::with_capacity(8)
-            .spacing(18)
-            .push(text::title2(effect.name.as_str()))
-            .push(text::body(effect.tagline.as_str()))
-            .push(text::body(effect.description.as_str()))
-            .push(section)
-            .push(actions)
-            .into()
+        content.push(section).push(actions).into()
     }
     fn settings_view(&self) -> Element<'_, Message> {
         let effects = settings::section().title("Effects").add(
             widget::column::with_capacity(6)
                 .spacing(16)
-                .push(text::body(
-                    "Import glass effects and keep your shader packs up to date.",
-                ))
+                .push(text::body("Import glass effects."))
                 .push(button::standard("Import effect").on_press(Message::Import))
                 .push(text::caption(
                     "Select a JSON pack, or select both a .frag file and its JSON settings.",
@@ -649,8 +669,9 @@ impl Forge {
             .push(effects)
             .push(
                 settings::section().title("Engine").add(
-                    widget::column::with_capacity(2)
+                    widget::column::with_capacity(3)
                         .spacing(24)
+                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install prebuilt binaries or build from source, then sign out and back in."))
                         .push(self.engine_component_view(engine::Component::Compositor))
                         .push(self.engine_component_view(engine::Component::Panel)),
                 ),
@@ -705,7 +726,6 @@ impl cosmic::Application for Forge {
         let mut lock_nav = nav_bar::Model::default();
         lock_nav.insert().text("Lock screen mods");
         let (status, engine_note) = store::engine_status();
-        let needs_engine = !store::effect_available(&effects[index]);
         let mut app = Self {
             core,
             nav,
@@ -721,7 +741,6 @@ impl cosmic::Application for Forge {
             polled: Instant::now(),
             error,
             about: false,
-            needs_engine,
             engine_updates: Vec::new(),
             show_engine_update: false,
             theme_dirty: false,
@@ -805,11 +824,9 @@ impl cosmic::Application for Forge {
             return Task::none();
         }
         if let Some(page) = self.nav.data::<Page>(id).copied() {
-            if let Page::Effect(index) = page {
-                if !store::effect_available(&self.effects[index]) {
-                    self.needs_engine = true;
-                    return Task::none();
-                }
+            if let Page::Effect(index) = page
+                && store::effect_available(&self.effects[index])
+            {
                 let result = self.store.select_effect(&self.effects[index]);
                 if !self.report(result) {
                     return Task::none();
@@ -881,6 +898,13 @@ impl cosmic::Application for Forge {
         if !matches!(self.page, Page::Effect(_)) && self.error.is_none() {
             return None;
         }
+        if let Page::Effect(index) = self.page
+            && self.error.is_none()
+            && (!store::effect_available(&self.effects[index])
+                || self.state.selected != self.effects[index].id)
+        {
+            return None;
+        }
         let runtime_note = (matches!(self.page, Page::Effect(index) if self.effects[index].shader.is_some()) && !packs::engine_active())
             .then_some("This glass pack needs Forge renderer ABI 1. Install the new engine and sign in again.");
         let native =
@@ -906,12 +930,6 @@ impl cosmic::Application for Forge {
         )
     }
     fn dialog(&self) -> Option<Element<'_, Message>> {
-        if self.needs_engine {
-            return Some(widget::dialog().title("Glass compositor required")
-                .body("To use this effect, install or update the glass compositor from Settings, then sign out and back in.")
-                .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
-                .secondary_action(button::standard("Cancel").on_press(Message::DismissEngine)).into());
-        }
         if self.show_engine_update && !self.engine_updates.is_empty() {
             let components = self
                 .engine_updates
@@ -938,7 +956,6 @@ impl cosmic::Application for Forge {
     }
     fn on_escape(&mut self) -> Task<Message> {
         self.about = false;
-        self.needs_engine = false;
         self.show_engine_update = false;
         Task::none()
     }
@@ -977,7 +994,6 @@ impl cosmic::Application for Forge {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::DismissEngine => self.needs_engine = false,
             Message::DismissEngineUpdate => self.show_engine_update = false,
             Message::Repository => {
                 let result = std::process::Command::new("xdg-open")
@@ -989,7 +1005,6 @@ impl cosmic::Application for Forge {
             }
             Message::EngineSettings => {
                 if self.flush() {
-                    self.needs_engine = false;
                     self.show_engine_update = false;
                     self.show_updates = false;
                     if !matches!(self.page, Page::Settings) {
@@ -999,7 +1014,10 @@ impl cosmic::Application for Forge {
                 }
             }
             Message::Value(index, value) => {
-                if let Page::Effect(effect) = self.page {
+                if let Page::Effect(effect) = self.page
+                    && store::effect_available(&self.effects[effect])
+                    && self.state.selected == self.effects[effect].id
+                {
                     let control = self.effects[effect].controls[index].clone();
                     self.pending.insert(control.key.clone(), (control, value));
                     self.changed = Instant::now();
@@ -1067,6 +1085,19 @@ impl cosmic::Application for Forge {
                     }
                     let state = self.store.fingerprint(&self.effects);
                     if state != self.state {
+                        if state.selected != self.state.selected {
+                            let index = self
+                                .effects
+                                .iter()
+                                .position(|e| e.id == state.selected)
+                                .unwrap_or(0);
+                            if matches!(self.page, Page::Effect(_)) {
+                                self.page = Page::Effect(index);
+                            }
+                            if matches!(self.settings_return, Page::Effect(_)) {
+                                self.settings_return = Page::Effect(index);
+                            }
+                        }
                         let theme_changed = state.dark != self.state.dark
                             || state.accent != self.state.accent
                             || state.material != self.state.material
@@ -1147,9 +1178,20 @@ impl cosmic::Application for Forge {
                 }
             }
             Message::Engine(component, action) => self.start_component(component, action),
+            Message::ApplyEffect => {
+                if self.flush()
+                    && let Page::Effect(index) = self.page
+                    && store::effect_available(&self.effects[index])
+                {
+                    let result = self.store.select_effect(&self.effects[index]);
+                    self.report(result);
+                }
+            }
             Message::Reset => {
                 if self.flush()
                     && let Page::Effect(index) = self.page
+                    && store::effect_available(&self.effects[index])
+                    && self.state.selected == self.effects[index].id
                 {
                     let result = self.store.reset(&self.effects[index]);
                     self.report(result);

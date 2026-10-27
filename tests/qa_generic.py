@@ -23,12 +23,17 @@ def main():
         session.select_effect(3)
         assert session.get('glass_effect') == '"aero"', 'Revision 1 accepted a generic effect'
         session.capture('revision-one-needs-update')
-        session.key('Escape')
+        session.click(856, 24)
+        session.click(856, 24)
+        assert session.get('glass_effect') == '"aero"', 'Settings applied a gated shader'
         record_path = session.path / 'state/cosmic-forge/engine-installation.json'
         record = json.loads(record_path.read_text())
         record['renderer_revision'] = 2
         record_path.write_text(json.dumps(record))
-        session.select_effect(3)
+        time.sleep(1.3)
+        assert session.get('glass_effect') == '"aero"', 'Engine availability silently applied the preview'
+        session.capture('engine-ready-to-apply')
+        session.click(380, 265)
         assert session.get('glass_effect') == '"plain-glass"'
         session.capture('plain-glass')
         assert 'base:"glass"' in session.get('forge_runtime')
