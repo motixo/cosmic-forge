@@ -65,7 +65,7 @@ try:
     assert preview.getpixel((664,350))[:3] == (30,160,80),'Selected background preview is missing'
     # Replacing the image must update the preview rather than reuse the old texture.
     Image.new('RGB',(80,32),(190,40,70)).save(source)
-    s.click(385,227)
+    s.click(385,188)
     wait_for(lambda:(locker/'wallpaper').read_text()!=selected,'New image did not replace the wallpaper')
     selected = (locker/'wallpaper').read_text()
     source.unlink()
@@ -74,7 +74,7 @@ try:
     s.click(100,450);s.click(984,192)
     assert (locker/'media_enabled').read_text().strip() == 'false'
     assert (locker/'wallpaper').read_text() == selected
-    s.click(100,410);s.click(550,227)
+    s.click(100,410);s.click(550,188)
     assert (locker/'wallpaper').read_text().strip() == 'None'
     assert s.capture('background-follow-desktop').getpixel((664,350))[:3] != (190,40,70)
     assert copies[0].exists()

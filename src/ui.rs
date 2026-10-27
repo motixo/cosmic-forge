@@ -606,11 +606,9 @@ impl Forge {
         for (index, c) in m.controls.iter().enumerate() {
             match c.kind {
                 mods::Kind::Image => {
-                    content = content.push(text::body(if config.wallpaper.is_some() {
-                        "Using a separate lock screen wallpaper"
-                    } else {
-                        "Using desktop wallpaper"
-                    }));
+                    if config.wallpaper.is_none() {
+                        content = content.push(text::body("Using desktop wallpaper"));
+                    }
                     let mut choose = button::suggested("Choose image");
                     let mut follow = button::standard("Use desktop wallpaper");
                     if !self.importing_image {
