@@ -110,6 +110,33 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             .value,
         8.0
     );
+    for (index, key, amount) in [
+        (1, "forge_crystal_color", 61),
+        (2, "aero_color", 27),
+        (3, "forge_liquid_color", 44),
+    ] {
+        let effect = &effects[index];
+        let color = effect.controls.iter().find(|c| c.key == key).unwrap();
+        assert_eq!(color.label, "Theme color");
+        store.select_effect(effect).unwrap();
+        store.set_control(color, &json!(amount)).unwrap();
+    }
+    for (index, amount) in [(1, 61), (2, 27), (3, 44)] {
+        let effect = &effects[index];
+        store.select_effect(effect).unwrap();
+        let color = effect
+            .controls
+            .iter()
+            .find(|c| c.label == "Theme color")
+            .unwrap();
+        assert_eq!(store.value(color), json!(amount));
+    }
+    store.select_effect(&effects[1]).unwrap();
+    let runtime: RuntimeEffect =
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+    assert_eq!(runtime.parameters[0].name, "forge_crystal_color");
+    assert_eq!(runtime.parameters[0].value, 61.0);
+    assert_eq!(store.value(effects[1].controls.last().unwrap()), json!(50));
 }
 
 fn sample() -> Vec<u8> {
