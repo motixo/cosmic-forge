@@ -1,14 +1,17 @@
 # COSMIC Forge
 
 A native mod manager for the **COSMIC desktop**. Currently supports glass shader
-effects: Frosted Glass, Crystal, Aero and community effects.
-The sidebar groups Shaders, Panel and Lock screen; the latter two are ready for
-their first mod integrations.
+effects, Penumbra and theme-aware panel colors.
+The sidebar groups Shaders, Panel & Dock and Lock screen.
 
 Adjust effects, import JSON + `.frag` files and manage the glass compositor from
 Settings. Independent repositories maintain the
 [shaders](https://github.com/motixo/cosmic-forge-shaders) and
-[compositor engine](https://github.com/motixo/cosmic-forge-engine).
+[engine](https://github.com/motixo/cosmic-forge-engine).
+The [mod catalog](https://github.com/motixo/cosmic-forge-mods) updates the list,
+controls and presets without rebuilding Forge. The header update button refreshes
+effects and mods and checks for engine updates. Background checks run every six
+hours while the app is open.
 
 ## Build and install
 

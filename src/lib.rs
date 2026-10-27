@@ -2,7 +2,9 @@
 pub mod catalog;
 pub mod engine;
 mod material;
+pub mod mods;
 pub mod packs;
+pub mod panel;
 #[path = "../engine/runtime.rs"]
 pub mod runtime;
 pub mod store;

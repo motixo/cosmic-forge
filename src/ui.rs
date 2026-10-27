@@ -9,8 +9,8 @@ use cosmic::{
 use cosmic_forge::{
     APP_ID, VERSION,
     catalog::{self, Control, ControlKind, Effect},
-    engine, packs,
-    store::{self, CATEGORIES, Fingerprint, Store, xdg},
+    engine, mods, packs, panel,
+    store::{self, Fingerprint, Store, xdg},
 };
 use serde_json::{Value, json};
 use std::{
@@ -27,30 +27,34 @@ impl CosmicFlags for Flags {
 #[derive(Clone, Copy, Debug)]
 enum Page {
     Effect(usize),
-    Panel,
+    Panel(usize),
     LockScreen,
-    Surfaces,
+    Settings,
 }
 #[derive(Clone, Debug)]
 pub enum Message {
     Value(usize, Value),
     Flush,
-    Category(&'static str, bool),
-    Panel,
+    Panel(nav_bar::Id),
+    PanelProfile(usize),
+    PanelMode(usize),
+    PanelColor(widget::color_picker::ColorPickerUpdate),
+    MatchPanelTheme,
+    ModValue(usize, Value),
+    ModPreset,
+    Engine(engine::Component, engine::Action),
     LockScreen,
-    Surfaces,
+    Settings,
     Reset,
     About(bool),
     Repository,
     DismissEngine,
+    DismissEngineUpdate,
     EngineSettings,
     Folder,
     Import,
     Imported(Option<Result<Vec<std::path::PathBuf>, String>>),
     RemoveEffect,
-    InstallEngine,
-    BuildEngine,
-    RestoreEngine,
     CheckUpdates,
     Tick,
     Exit,
@@ -58,6 +62,7 @@ pub enum Message {
 
 enum TransferEvent {
     Progress(engine::Progress),
+    EngineUpdates(Vec<engine::Component>),
     Finished(Result<String, String>),
 }
 
@@ -77,12 +82,24 @@ pub struct Forge {
     error: Option<String>,
     about: bool,
     needs_engine: bool,
+    engine_updates: Vec<engine::Component>,
+    show_engine_update: bool,
     theme_dirty: bool,
     status: &'static str,
     engine_note: Option<&'static str>,
     transfer: Option<std::sync::mpsc::Receiver<TransferEvent>>,
     engine_progress: Option<engine::Progress>,
     renderer_note: String,
+    engine_component: engine::Component,
+    panel_note: String,
+    panel_revision: u64,
+    mods: Vec<mods::Mod>,
+    show_updates: bool,
+    panel_names: Vec<String>,
+    panel_index: usize,
+    panel_mode: usize,
+    panel_profile: Option<panel::Profile>,
+    color_picker: widget::color_picker::Model,
     update_note: String,
     checked: Instant,
     catalog_stamp: u64,
@@ -116,12 +133,33 @@ impl Forge {
         self.reload_effects()
     }
     fn check_updates(&mut self) {
-        if self.transfer.is_none() {
-            self.engine_progress = None;
+        if self.transfer.is_some() {
+            return;
         }
+        self.engine_progress = None;
         self.checked = Instant::now();
-        self.start_transfer("Checking GitHub for glass effects…", |_| {
-            packs::update(&packs::root())
+        self.start_transfer("Checking effects, mods and engine…", |sender| {
+            let effects = match packs::update(&packs::root()) {
+                Ok(note) => format!("Effects: {note}"),
+                Err(e) => format!("Effects: {e:#}"),
+            };
+            let mods = match mods::update(&mods::root()) {
+                Ok(note) => format!("Mods: {note}"),
+                Err(e) => format!("Mods: {e:#}"),
+            };
+            let engine = match engine::available_updates() {
+                Ok(updates) => {
+                    let note = if updates.is_empty() {
+                        "Engine: no updates available"
+                    } else {
+                        "Engine update available · open Settings to update"
+                    };
+                    let _ = sender.send(TransferEvent::EngineUpdates(updates));
+                    note.to_owned()
+                }
+                Err(e) => format!("Engine: {e:#}"),
+            };
+            Ok(format!("{effects}\n{mods}\n{engine}"))
         });
     }
     fn start_transfer(
@@ -143,19 +181,23 @@ impl Forge {
         });
     }
     fn transfer_note(&mut self, note: String) {
-        if self.engine_progress.is_some() {
+        if self.engine_progress.is_some() && self.engine_component == engine::Component::Panel {
+            self.panel_note = note;
+        } else if self.engine_progress.is_some() {
             self.renderer_note = note;
         } else {
             self.update_note = note;
         }
     }
-    fn start_engine(&mut self, action: engine::Action) {
+    fn start_component(&mut self, component: engine::Component, action: engine::Action) {
         if self.transfer.is_some() {
             return;
         }
+        self.show_updates = false;
+        self.engine_component = component;
         self.engine_progress = Some(engine::Progress::Checking);
-        self.start_transfer("Checking the glass renderer…", move |sender| {
-            engine::setup(action, |progress| {
+        self.start_transfer("Checking installed engine…", move |sender| {
+            engine::setup_component(component, action, |progress| {
                 let _ = sender.send(TransferEvent::Progress(progress));
             })
         });
@@ -244,15 +286,273 @@ impl Forge {
             widget::segmented_button::Selectable::deactivate(model, active);
         }
         let page = match self.page {
-            Page::Surfaces => self.settings_return,
+            Page::Settings => self.settings_return,
             page => page,
         };
         match page {
             Page::Effect(index) => self.nav.activate_position(index as u16),
-            Page::Panel => self.panel_nav.activate_position(0),
+            Page::Panel(index) => self.panel_nav.activate_position(index as u16),
             Page::LockScreen => self.lock_nav.activate_position(0),
-            Page::Surfaces => false,
+            Page::Settings => false,
         };
+    }
+    fn reload_panel(&mut self, reset_picker: bool) {
+        let result = (|| -> anyhow::Result<()> {
+            let names = panel::profiles(&self.store)?;
+            if let Some(current) = self.panel_names.get(self.panel_index) {
+                self.panel_index = names.iter().position(|n| n == current).unwrap_or(0);
+            }
+            self.panel_names = names;
+            let profile = self
+                .panel_names
+                .get(self.panel_index)
+                .map(|name| panel::load(&self.store, name))
+                .transpose()?;
+            if reset_picker || profile != self.panel_profile {
+                self.panel_profile = profile;
+                self.reset_panel_picker();
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.error = Some(format!("{error:#}"));
+        }
+    }
+    fn reset_panel_picker(&mut self) {
+        let dark = self.panel_mode == 1;
+        let color = self
+            .panel_profile
+            .as_ref()
+            .and_then(|p| p.colors)
+            .and_then(|c| c.get(dark));
+        let rgb = |c: [f32; 3]| iced::Color::from_rgb(c[0], c[1], c[2]);
+        self.color_picker = widget::color_picker::Model::new(
+            "Hex",
+            "RGB",
+            Some(rgb(panel::theme_color(&self.store, dark))),
+            color.map(rgb),
+        );
+    }
+    fn save_panel_color(&mut self, color: Option<[f32; 3]>) {
+        if self.panel_revision > 0
+            && let Some(name) = self.panel_names.get(self.panel_index)
+        {
+            let result = panel::set_color(&mut self.store, name, self.panel_mode == 1, color);
+            if self.report(result) {
+                self.reload_panel(true);
+            }
+        }
+    }
+    fn reload_mods(&mut self) {
+        let result = mods::load(&mods::root());
+        let catalog = match result {
+            Ok(c) => c,
+            Err(e) => {
+                self.error = Some(format!("{e:#}"));
+                return;
+            }
+        };
+        if self.mods == catalog.mods {
+            return;
+        }
+        let remap = |page: Page| match page {
+            Page::Panel(index) => self
+                .mods
+                .get(index)
+                .and_then(|m| catalog.mods.iter().position(|new| new.id == m.id))
+                .map(Page::Panel)
+                .unwrap_or(Page::Effect(0)),
+            page => page,
+        };
+        self.page = remap(self.page);
+        self.settings_return = remap(self.settings_return);
+        self.mods = catalog.mods;
+        self.panel_nav = nav_bar::Model::default();
+        for (index, m) in self.mods.iter().enumerate() {
+            self.panel_nav
+                .insert()
+                .text(m.name.clone())
+                .data(Page::Panel(index));
+        }
+        self.sync_selection();
+    }
+    fn set_mod_values(&mut self, values: BTreeMap<String, Value>) {
+        if let Page::Panel(index) = self.page
+            && let Some(m) = self.mods.get(index)
+            && self.panel_revision >= m.engine_revision
+            && let Some(profile) = self.panel_names.get(self.panel_index)
+        {
+            let result = panel::apply_controls(&mut self.store, profile, &m.controls, &values);
+            if self.report(result) {
+                self.reload_panel(false);
+            }
+        }
+    }
+    fn engine_component_view(&self, component: engine::Component) -> Element<'_, Message> {
+        let (install_label, build_label, restore_label, name, note) = match component {
+            engine::Component::Compositor => (
+                "Install compositor",
+                "Build compositor",
+                "Restore original COSMIC compositor",
+                "compositor",
+                self.renderer_note.as_str(),
+            ),
+            engine::Component::Panel => (
+                "Install panel",
+                "Build panel",
+                "Restore original COSMIC panel",
+                "panel",
+                self.panel_note.as_str(),
+            ),
+        };
+        let mut install = button::standard(install_label);
+        let mut build = button::standard(build_label);
+        let mut restore = button::standard(restore_label);
+        if self.transfer.is_none() {
+            install = install.on_press(Message::Engine(component, engine::Action::Install));
+            build = build.on_press(Message::Engine(component, engine::Action::Build));
+            restore = restore.on_press(Message::Engine(component, engine::Action::Restore));
+        }
+        let mut content=widget::column::with_capacity(6).spacing(16)
+            .push(text::heading(component.label()))
+            .push(text::body(format!("Requires a supported COSMIC release from 1.10 onward. Install a prebuilt {name} or build from source, then sign out and back in.")))
+            .push(widget::row::with_capacity(3).spacing(12).align_y(iced::Alignment::Center).push(install).push(text::body("or")).push(build))
+            .push(restore);
+        let progress = self
+            .engine_progress
+            .filter(|_| self.engine_component == component);
+        if let Some(progress) = progress {
+            let mut bar = widget::progress_bar::linear::Linear::new()
+                .width(Length::Fill)
+                .girth(6.0);
+            if progress.finished() {
+                bar = bar.progress(1.0);
+            }
+            let label = if component == engine::Component::Panel {
+                progress.panel_label()
+            } else {
+                progress.label()
+            };
+            content = content.push(
+                widget::column::with_capacity(2)
+                    .spacing(10)
+                    .push(text::body(label))
+                    .push(bar),
+            );
+        } else if !note.is_empty() {
+            content = content.push(text::caption(note));
+        }
+        content.into()
+    }
+    fn panel_view(&self, index: usize) -> Element<'_, Message> {
+        let Some(m) = self.mods.get(index) else {
+            return text::body("No panel mods are available.").into();
+        };
+        let mut content = widget::column::with_capacity(12)
+            .spacing(18)
+            .push(text::title2(m.name.as_str()))
+            .push(text::body(m.description.as_str()))
+            .push(
+                settings::item::builder("Panel profile").control(widget::dropdown(
+                    self.panel_names.as_slice(),
+                    Some(self.panel_index),
+                    Message::PanelProfile,
+                )),
+            );
+        if self.panel_revision < m.engine_revision {
+            return content.push(text::body("Install or update the panel engine in Settings, then sign out and back in to use this mod."))
+                .push(button::suggested("Go to settings").on_press(Message::EngineSettings)).into();
+        }
+        let Some(profile) = &self.panel_profile else {
+            return content
+                .push(text::body("No COSMIC panel profiles are configured."))
+                .into();
+        };
+        for (i, c) in m.controls.iter().enumerate() {
+            match c.kind {
+                mods::Kind::ThemeColor => {
+                    let customized = profile
+                        .colors
+                        .and_then(|c| c.get(self.panel_mode == 1))
+                        .is_some();
+                    content = content
+                        .push(settings::item::builder("Theme").control(widget::dropdown(
+                            &["Light", "Dark"][..],
+                            Some(self.panel_mode),
+                            Message::PanelMode,
+                        )))
+                        .push(
+                            settings::item::builder(c.label.as_str())
+                                .description(if customized {
+                                    "Custom color"
+                                } else {
+                                    "Following COSMIC theme"
+                                })
+                                .control(
+                                    self.color_picker
+                                        .picker_button(Message::PanelColor, None)
+                                        .width(52)
+                                        .height(36),
+                                ),
+                        )
+                        .push(button::standard("Match theme").on_press(Message::MatchPanelTheme));
+                    if self.color_picker.get_is_active() {
+                        content = content.push(
+                            self.color_picker
+                                .builder(Message::PanelColor)
+                                .save_label("Apply")
+                                .cancel_label("Cancel")
+                                .build("Recent colors", "Copy to clipboard", "Copied"),
+                        );
+                    }
+                    content = content.push(text::caption("Light and dark colors switch with your desktop theme, even while Forge is closed."));
+                }
+                mods::Kind::Boolean => {
+                    let value = panel::control_value(&self.store, &profile.name, c)
+                        .ok()
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    content = content.push(
+                        settings::item::builder(c.label.as_str())
+                            .description(c.description.as_str())
+                            .control(
+                                widget::toggler(value)
+                                    .on_toggle(move |v| Message::ModValue(i, json!(v))),
+                            ),
+                    );
+                }
+                mods::Kind::Integer => {
+                    let value = panel::control_value(&self.store, &profile.name, c)
+                        .ok()
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(i64::from(c.min)) as i32;
+                    content = content
+                        .push(
+                            settings::item::builder(c.label.as_str())
+                                .description(c.description.as_str())
+                                .control(widget::spin_button(
+                                    format!("{value}{}", c.unit),
+                                    c.label.clone(),
+                                    value,
+                                    1,
+                                    c.min,
+                                    c.max,
+                                    move |v| Message::ModValue(i, json!(v)),
+                                )),
+                        )
+                        .push(
+                            widget::slider(c.min..=c.max, value, move |v| {
+                                Message::ModValue(i, json!(v))
+                            })
+                            .step(1),
+                        );
+                }
+            }
+        }
+        if !m.preset.is_empty() {
+            content = content.push(button::standard("Apply preset").on_press(Message::ModPreset));
+        }
+        content.into()
     }
     fn mods_view(&self, title: &str, note: &str) -> Element<'_, Message> {
         widget::column::with_capacity(3)
@@ -330,48 +630,7 @@ impl Forge {
             .push(actions)
             .into()
     }
-    fn surfaces_view(&self) -> Element<'_, Message> {
-        let mut section = settings::section().title("Glass surfaces")
-            .add(text::body("Choose where your selected effect appears. These choices follow both light and dark themes."));
-        for (key, label, description) in CATEGORIES {
-            section = section.add(
-                settings::item::builder(label)
-                    .description(description)
-                    .toggler(self.store.category(key), move |v| Message::Category(key, v)),
-            );
-        }
-        let mut install = button::standard("Install compositor");
-        let mut build = button::standard("Build compositor");
-        let mut restore = button::standard("Restore original COSMIC compositor");
-        if self.transfer.is_none() {
-            install = install.on_press(Message::InstallEngine);
-            build = build.on_press(Message::BuildEngine);
-            restore = restore.on_press(Message::RestoreEngine);
-        }
-        let mut renderer_content = widget::column::with_capacity(4).spacing(16)
-            .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install a prebuilt compositor or build from source, then sign out and back in."))
-            .push(widget::row::with_capacity(3).spacing(12).align_y(iced::Alignment::Center)
-                .push(install).push(text::body("or")).push(build)).push(restore);
-        if let Some(progress) = self.engine_progress {
-            let mut bar = widget::progress_bar::linear::Linear::new()
-                .width(Length::Fill)
-                .girth(6.0);
-            if progress.finished() {
-                bar = bar.progress(1.0);
-            }
-            renderer_content = renderer_content.push(
-                widget::column::with_capacity(2)
-                    .spacing(10)
-                    .push(text::body(progress.label()))
-                    .push(bar),
-            );
-        }
-        if self.engine_progress.is_none() && !self.renderer_note.is_empty() {
-            renderer_content = renderer_content.push(text::caption(self.renderer_note.as_str()));
-        }
-        let renderer = settings::section()
-            .title("Compositor")
-            .add(renderer_content);
+    fn settings_view(&self) -> Element<'_, Message> {
         let effects = settings::section().title("Effects").add(
             widget::column::with_capacity(6)
                 .spacing(16)
@@ -382,19 +641,20 @@ impl Forge {
                 .push(text::caption(
                     "Select a JSON pack, or select both a .frag file and its JSON settings.",
                 ))
-                .push(button::standard("Check for effect updates").on_press(Message::CheckUpdates))
-                .push_maybe(
-                    (!self.update_note.is_empty())
-                        .then(|| text::caption(self.update_note.as_str())),
-                )
                 .push(button::standard("Open effects folder").on_press(Message::Folder)),
         );
         widget::column::with_capacity(5)
             .spacing(24)
             .push(text::title2("Settings"))
-            .push(section)
             .push(effects)
-            .push(renderer)
+            .push(
+                settings::section().title("Engine").add(
+                    widget::column::with_capacity(2)
+                        .spacing(24)
+                        .push(self.engine_component_view(engine::Component::Compositor))
+                        .push(self.engine_component_view(engine::Component::Panel)),
+                ),
+            )
             .into()
     }
 }
@@ -440,8 +700,8 @@ impl cosmic::Application for Forge {
                 .data(Page::Effect(index));
         }
         nav.activate_position(index as u16);
-        let mut panel_nav = nav_bar::Model::default();
-        panel_nav.insert().text("Panel mods");
+        let panel_nav = nav_bar::Model::default();
+
         let mut lock_nav = nav_bar::Model::default();
         lock_nav.insert().text("Lock screen mods");
         let (status, engine_note) = store::engine_status();
@@ -462,18 +722,32 @@ impl cosmic::Application for Forge {
             error,
             about: false,
             needs_engine,
+            engine_updates: Vec::new(),
+            show_engine_update: false,
             theme_dirty: false,
             status,
             engine_note,
             transfer: None,
             engine_progress: None,
             renderer_note: String::new(),
+            engine_component: engine::Component::Compositor,
+            panel_note: String::new(),
+            panel_revision: panel::installed_revision().unwrap_or(0),
+            mods: Vec::new(),
+            show_updates: false,
+            panel_names: Vec::new(),
+            panel_index: 0,
+            panel_mode: usize::from(store::Store::default().dark()),
+            panel_profile: None,
+            color_picker: widget::color_picker::Model::new("Hex", "RGB", None, None),
             update_note: String::new(),
             checked: Instant::now(),
             catalog_stamp: packs::fingerprint(&packs::root()),
         };
+        app.reload_mods();
+        app.reload_panel(true);
         app.set_header_title("COSMIC Forge".into());
-        if packs::due(&packs::root()) {
+        if packs::due(&packs::root()) || mods::due(&mods::root()) {
             app.check_updates();
         }
         let task = app.set_window_title("COSMIC Forge".into(), app.core.main_window_id().unwrap());
@@ -510,8 +784,8 @@ impl cosmic::Application for Forge {
             .push(group("Shaders", &self.nav, |id| {
                 cosmic::Action::Cosmic(cosmic::app::Action::NavBar(id))
             }))
-            .push(group("Panel", &self.panel_nav, |_| {
-                cosmic::Action::App(Message::Panel)
+            .push(group("Panel & Dock", &self.panel_nav, |id| {
+                cosmic::Action::App(Message::Panel(id))
             }))
             .push(group("Lock screen", &self.lock_nav, |_| {
                 cosmic::Action::App(Message::LockScreen)
@@ -547,9 +821,14 @@ impl cosmic::Application for Forge {
         Task::none()
     }
     fn header_end(&self) -> Vec<Element<'_, Message>> {
+        let mut update = button::icon(widget::icon::from_name("view-refresh-symbolic"));
+        if self.transfer.is_none() {
+            update = update.on_press(Message::CheckUpdates);
+        }
         vec![
+            update.into(),
             button::icon(widget::icon::from_name("preferences-system-symbolic"))
-                .on_press(Message::Surfaces)
+                .on_press(Message::Settings)
                 .into(),
             button::icon(widget::icon::from_name("help-about-symbolic"))
                 .on_press(Message::About(true))
@@ -559,9 +838,9 @@ impl cosmic::Application for Forge {
     fn view(&self) -> Element<'_, Message> {
         let content = match self.page {
             Page::Effect(i) => self.effect_view(i),
-            Page::Panel => self.mods_view("Panel", "Panel and dock mods for your COSMIC desktop."),
+            Page::Panel(index) => self.panel_view(index),
             Page::LockScreen => self.mods_view("Lock screen", "Mods for your COSMIC lock screen."),
-            Page::Surfaces => self.surfaces_view(),
+            Page::Settings => self.settings_view(),
         };
         widget::scrollable(
             widget::container(content)
@@ -573,6 +852,32 @@ impl cosmic::Application for Forge {
         .into()
     }
     fn footer(&self) -> Option<Element<'_, Message>> {
+        if self.error.is_none()
+            && self.show_updates
+            && (self.transfer.is_some() || self.checked.elapsed() < Duration::from_secs(20))
+            && !self.update_note.is_empty()
+        {
+            return Some(
+                widget::container(text::caption(self.update_note.as_str()))
+                    .padding([10, 24])
+                    .width(Length::Fill)
+                    .into(),
+            );
+        }
+        if self.error.is_none() && !self.engine_updates.is_empty() && !self.show_engine_update {
+            return Some(
+                widget::container(
+                    widget::row::with_capacity(2)
+                        .spacing(16)
+                        .align_y(iced::Alignment::Center)
+                        .push(text::caption("Engine update available"))
+                        .push(button::standard("Go to settings").on_press(Message::EngineSettings)),
+                )
+                .padding([10, 24])
+                .width(Length::Fill)
+                .into(),
+            );
+        }
         if !matches!(self.page, Page::Effect(_)) && self.error.is_none() {
             return None;
         }
@@ -607,6 +912,17 @@ impl cosmic::Application for Forge {
                 .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
                 .secondary_action(button::standard("Cancel").on_press(Message::DismissEngine)).into());
         }
+        if self.show_engine_update && !self.engine_updates.is_empty() {
+            let components = self
+                .engine_updates
+                .iter()
+                .map(|c| c.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(widget::dialog().title("Engine update available").body(format!("An engine update is available for {components}. Install / update it in Settings, then sign out and back in to activate it."))
+                .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
+                .secondary_action(button::standard("Later").on_press(Message::DismissEngineUpdate)).into());
+        }
         self.about.then(|| {
             widget::dialog()
                 .title("COSMIC Forge")
@@ -623,6 +939,7 @@ impl cosmic::Application for Forge {
     fn on_escape(&mut self) -> Task<Message> {
         self.about = false;
         self.needs_engine = false;
+        self.show_engine_update = false;
         Task::none()
     }
     fn on_app_exit(&mut self) -> Option<Message> {
@@ -661,6 +978,7 @@ impl cosmic::Application for Forge {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::DismissEngine => self.needs_engine = false,
+            Message::DismissEngineUpdate => self.show_engine_update = false,
             Message::Repository => {
                 let result = std::process::Command::new("xdg-open")
                     .arg("https://github.com/motixo/cosmic-forge")
@@ -672,8 +990,12 @@ impl cosmic::Application for Forge {
             Message::EngineSettings => {
                 if self.flush() {
                     self.needs_engine = false;
-                    self.settings_return = self.page;
-                    self.page = Page::Surfaces;
+                    self.show_engine_update = false;
+                    self.show_updates = false;
+                    if !matches!(self.page, Page::Settings) {
+                        self.settings_return = self.page;
+                    }
+                    self.page = Page::Settings;
                 }
             }
             Message::Value(index, value) => {
@@ -693,16 +1015,31 @@ impl cosmic::Application for Forge {
                     .map(|r| r.try_iter().collect::<Vec<_>>())
                     .unwrap_or_default();
                 for event in events {
-                    let TransferEvent::Finished(result) = event else {
-                        if let TransferEvent::Progress(progress) = event {
-                            self.engine_progress = Some(progress);
+                    let result = match event {
+                        TransferEvent::EngineUpdates(updates) => {
+                            self.show_engine_update = self.show_updates && !updates.is_empty();
+                            self.engine_updates = updates;
+                            continue;
                         }
-                        continue;
+                        TransferEvent::Progress(progress) => {
+                            self.engine_progress = Some(progress);
+                            continue;
+                        }
+                        TransferEvent::Finished(result) => result,
                     };
                     self.transfer = None;
+                    if self.engine_progress.is_none() {
+                        self.checked = Instant::now();
+                    }
                     match result {
                         Ok(note) => {
+                            if self.engine_progress.is_some() {
+                                self.engine_updates.retain(|c| *c != self.engine_component);
+                            }
                             self.transfer_note(note);
+                            self.panel_revision = panel::installed_revision().unwrap_or(0);
+                            self.reload_panel(true);
+                            self.reload_mods();
                             (self.status, self.engine_note) = store::engine_status();
                             if let Err(e) = self.reload_effects() {
                                 self.error = Some(format!("{e:#}"));
@@ -738,37 +1075,78 @@ impl cosmic::Application for Forge {
                         self.sync_selection();
                         self.theme_dirty |= theme_changed;
                     }
+                    self.reload_mods();
+                    if !self.color_picker.get_is_active() {
+                        self.reload_panel(false);
+                    }
                     self.polled = Instant::now();
                 }
             }
-            Message::Category(key, enabled) => {
-                if self.flush() {
-                    let result = self.store.set_category(key, enabled);
-                    self.report(result);
-                }
-            }
-            Message::Surfaces => {
+            Message::Settings => {
                 if self.flush() {
                     self.page = match self.page {
-                        Page::Surfaces => self.settings_return,
+                        Page::Settings => self.settings_return,
                         page => {
                             self.settings_return = page;
-                            Page::Surfaces
+                            Page::Settings
                         }
                     };
                     self.sync_selection();
                 }
             }
-            Message::Panel | Message::LockScreen => {
-                if self.flush() {
-                    self.page = if matches!(message, Message::Panel) {
-                        Page::Panel
-                    } else {
-                        Page::LockScreen
-                    };
+            Message::Panel(id) => {
+                if self.flush()
+                    && let Some(page) = self.panel_nav.data::<Page>(id).copied()
+                {
+                    self.page = page;
+                    self.reload_panel(true);
                     self.sync_selection();
                 }
             }
+            Message::LockScreen => {
+                if self.flush() {
+                    self.page = Page::LockScreen;
+                    self.sync_selection();
+                }
+            }
+            Message::PanelProfile(index) => {
+                if index < self.panel_names.len() {
+                    self.panel_index = index;
+                    self.reload_panel(true);
+                }
+            }
+            Message::PanelMode(index) => {
+                if index < 2 {
+                    self.panel_mode = index;
+                    self.reload_panel(true);
+                }
+            }
+            Message::PanelColor(update) => {
+                use widget::color_picker::ColorPickerUpdate as U;
+                let reset = matches!(update, U::Reset);
+                let apply = matches!(update, U::AppliedColor | U::ActionFinished);
+                let task = self.color_picker.update::<Message>(update);
+                if reset {
+                    self.save_panel_color(None);
+                } else if apply && let Some(c) = self.color_picker.get_applied_color() {
+                    self.save_panel_color(Some([c.r, c.g, c.b]));
+                }
+                return task.map(cosmic::Action::App);
+            }
+            Message::MatchPanelTheme => self.save_panel_color(None),
+            Message::ModValue(index, value) => {
+                if let Page::Panel(m) = self.page
+                    && let Some(c) = self.mods[m].controls.get(index)
+                {
+                    self.set_mod_values(BTreeMap::from([(c.key.clone(), value)]));
+                }
+            }
+            Message::ModPreset => {
+                if let Page::Panel(m) = self.page {
+                    self.set_mod_values(self.mods[m].preset.clone());
+                }
+            }
+            Message::Engine(component, action) => self.start_component(component, action),
             Message::Reset => {
                 if self.flush()
                     && let Page::Effect(index) = self.page
@@ -790,10 +1168,10 @@ impl cosmic::Application for Forge {
                     .map_err(Into::into);
                 self.report(result);
             }
-            Message::CheckUpdates => self.check_updates(),
-            Message::InstallEngine => self.start_engine(engine::Action::Install),
-            Message::BuildEngine => self.start_engine(engine::Action::Build),
-            Message::RestoreEngine => self.start_engine(engine::Action::Restore),
+            Message::CheckUpdates => {
+                self.show_updates = true;
+                self.check_updates();
+            }
             Message::Import => {
                 return cosmic::task::future(async {
                     use cosmic::dialog::file_chooser;

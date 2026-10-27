@@ -2,7 +2,7 @@
 mod ui;
 
 use cosmic_forge::{
-    APP_ID, VERSION, catalog, packs,
+    APP_ID, VERSION, catalog, mods, packs,
     store::{Store, xdg},
 };
 
@@ -14,8 +14,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("--help" | "-h") => {
             println!(
-                "COSMIC Forge — native COSMIC desktop effects\n\nUsage: cosmic-forge [--version | --status | --update-effects | --import-pack PACK.json | --import-pack SETTINGS.json SHADER.frag | --help]"
+                "COSMIC Forge — native COSMIC desktop effects\n\nUsage: cosmic-forge [--version | --status | --update-effects | --update-mods | --import-pack PACK.json | --import-pack SETTINGS.json SHADER.frag | --help]"
             );
+            return Ok(());
+        }
+        Some("--update-mods") => {
+            println!("{}", mods::update(&mods::root())?);
             return Ok(());
         }
         Some("--update-effects") => {

@@ -32,7 +32,7 @@ def main():
         session.click(856, 24)
         assert same(panel, capture('panel-after-settings')), 'Settings did not return to Panel'
         results['settings_returns_to_panel'] = True
-        session.click(100, 370)
+        session.click(100, 410)
         lock = capture('lock-screen')
         assert not same(panel, lock), 'Lock screen did not open its own page'
         session.click(856, 24)

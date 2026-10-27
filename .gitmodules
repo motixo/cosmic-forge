@@ -6,3 +6,7 @@
 	path = engine
 	url = https://github.com/motixo/cosmic-forge-engine.git
 	branch = main
+[submodule "mods"]
+	path = mods
+	url = https://github.com/motixo/cosmic-forge-mods.git
+	branch = main

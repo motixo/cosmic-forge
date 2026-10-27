@@ -61,7 +61,7 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             session.click(856, 24)
             session.scroll_to_bottom()
             session.capture('two-buttons').save(artifacts / 'two-buttons.png')
-            for index, (x, y, build) in enumerate([(420, 783, False), (600, 730, True)], start=1):
+            for index, (x, y, build) in enumerate([(420, 506, False), (600, 506, True)], start=1):
                 log = state / 'engine-build.log'
                 log.unlink(missing_ok=True)
                 session.click(x, y, wait=0.5)
@@ -82,7 +82,7 @@ print('FORGE_PROGRESS:already_installed',flush=True)
                 assert 'FORGE_PROGRESS:' + stage in log.read_text()
                 time.sleep(0.3)
             log.unlink()
-            session.click(420, 730)
+            session.click(420, 506)
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if log.exists() and 'COMPOSITOR_TEST_FAILURE' in log.read_text():

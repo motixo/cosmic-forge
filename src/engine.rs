@@ -127,6 +127,99 @@ pub fn prepare_from_release(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Component {
+    Compositor,
+    Panel,
+}
+
+impl Component {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compositor => "Compositor",
+            Self::Panel => "Panel & Dock",
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Compositor => "compositor",
+            Self::Panel => "panel",
+        }
+    }
+    fn record(self) -> &'static str {
+        match self {
+            Self::Compositor => "engine-installation.json",
+            Self::Panel => "panel-installation.json",
+        }
+    }
+}
+fn hash(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+fn receipt(component: Component, bundle: &str, record: &[u8]) -> serde_json::Value {
+    serde_json::json!({"component":component.name(),"bundle_sha256":bundle,"installation_sha256":hash(record)})
+}
+fn updates_for(state: &std::path::Path, bundle: &str) -> Result<Vec<Component>> {
+    let mut updates = Vec::new();
+    for component in [Component::Compositor, Component::Panel] {
+        let record = state.join(component.record());
+        if !record.exists() {
+            continue;
+        }
+        let bytes = fs::read(&record)?;
+        let saved: Option<serde_json::Value> =
+            fs::read(state.join(format!("engine-{}-receipt.json", component.name())))
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok());
+        if saved.as_ref() != Some(&receipt(component, bundle, &bytes)) {
+            updates.push(component);
+        }
+    }
+    Ok(updates)
+}
+pub fn available_updates() -> Result<Vec<Component>> {
+    let (status, metadata) = crate::packs::download(&format!(
+        "https://api.github.com/repos/{REPOSITORY}/releases/latest"
+    ))?;
+    ensure!(status == 200, "No engine release has been published yet");
+    let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
+    let root = prepare_from_release(&cache, &metadata, |url| {
+        let (status, bytes) = crate::packs::download(url)?;
+        ensure!(status == 200, "The engine package is unavailable");
+        Ok(bytes)
+    })?;
+    updates_for(
+        &xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge"),
+        root.file_name()
+            .and_then(|v| v.to_str())
+            .context("Missing engine package hash")?,
+    )
+}
+fn save_receipt(component: Component, root: &std::path::Path) -> Result<()> {
+    let state = xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge");
+    let record = state.join(component.record());
+    if !record.exists() {
+        return Ok(());
+    }
+    let value = receipt(
+        component,
+        root.file_name()
+            .and_then(|v| v.to_str())
+            .context("Missing engine package hash")?,
+        &fs::read(record)?,
+    );
+    let path = state.join(format!("engine-{}-receipt.json", component.name()));
+    ensure!(!path.is_symlink(), "Preserved a replaced engine receipt");
+    let mut file = tempfile::NamedTempFile::new_in(state)?;
+    file.write_all(&serde_json::to_vec(&value)?)?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Install,
     Build,
@@ -174,26 +267,51 @@ impl Progress {
             Self::AlreadyInstalled => "This renderer version is already installed",
         }
     }
+    pub fn panel_label(self) -> &'static str {
+        match self {
+            Self::Checking => "Checking installed panel…",
+            Self::Downloading => "Downloading the panel engine package…",
+            Self::DownloadingBinary => "Downloading the prebuilt panel…",
+            Self::Preparing => "Downloading and patching panel source…",
+            Self::Building => "Compiling the panel engine…",
+            Self::Installing => "Installing the panel engine…",
+            Self::Restoring => "Restoring the original COSMIC panel…",
+            Self::Complete => "Finished · sign out and back in to activate",
+            Self::AlreadyInstalled => "This panel engine version is already installed",
+        }
+    }
     pub fn finished(self) -> bool {
         matches!(self, Self::Complete | Self::AlreadyInstalled)
     }
 }
 
-pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<String> {
+pub fn setup(action: Action, progress: impl FnMut(Progress)) -> Result<String> {
+    setup_component(Component::Compositor, action, progress)
+}
+
+pub fn setup_component(
+    component: Component,
+    action: Action,
+    mut progress: impl FnMut(Progress),
+) -> Result<String> {
     let restore = action == Action::Restore;
     let mut release_tag = None;
     progress(Progress::Checking);
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
     let root = if restore {
-        let hash: String = Sha256::digest(RECOVERY.as_bytes())
+        let mut files = std::collections::BTreeMap::from([("recovery.py".into(), RECOVERY.into())]);
+        if component == Component::Panel {
+            files.insert("panel/__init__.py".into(), "".into());
+            files.insert(
+                "panel/recovery.py".into(),
+                include_str!("../engine/panel/recovery.py").into(),
+            );
+        }
+        let hash = Sha256::digest(serde_json::to_vec(&files)?)
             .iter()
             .map(|b| format!("{b:02x}"))
-            .collect();
-        cache_files(
-            &std::collections::BTreeMap::from([("recovery.py".into(), RECOVERY.into())]),
-            &cache,
-            &hash,
-        )?
+            .collect::<String>();
+        cache_files(&files, &cache, &hash)?
     } else {
         progress(Progress::Downloading);
         let (status, release) = crate::packs::download(&format!(
@@ -212,16 +330,33 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
         })?
     };
     let log_path: PathBuf =
-        xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge/engine-build.log");
+        xdg("XDG_STATE_HOME", ".local/state").join(if component == Component::Panel {
+            "cosmic-forge/panel-build.log"
+        } else {
+            "cosmic-forge/engine-build.log"
+        });
     fs::create_dir_all(log_path.parent().unwrap())?;
     let mut log = fs::File::create(&log_path)?;
     let mut command = Command::new("python3");
     command
-        .arg(root.join(if restore { "recovery.py" } else { "install.py" }))
+        .arg(root.join(if restore && component == Component::Panel {
+            "panel/recovery.py"
+        } else if restore {
+            "recovery.py"
+        } else {
+            "install.py"
+        }))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?);
     if !restore {
+        if component == Component::Panel {
+            ensure!(
+                root.join("panel/install.py").is_file(),
+                "Update the Forge engine release to add panel support"
+            );
+            command.args(["--component", "panel"]);
+        }
         if let Some(tag) = release_tag {
             command.args(["--release-tag", &tag]);
         }
@@ -268,6 +403,19 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
         "Renderer setup failed: {tail}\nFull log: {}",
         log_path.display()
     );
+    if !restore {
+        save_receipt(component, &root)?;
+    }
+    if component == Component::Panel {
+        return Ok(if last == Progress::AlreadyInstalled {
+            "The matching panel engine is already installed."
+        } else if restore {
+            "Original COSMIC panel restored. Sign out and back in to activate it."
+        } else {
+            "Panel engine installed. Sign out and back in to activate it."
+        }
+        .into());
+    }
     Ok(if last == Progress::AlreadyInstalled {
         "The matching Forge glass renderer is already installed. No rebuild or reinstall needed."
             .into()
@@ -276,4 +424,42 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
     } else {
         "Glass renderer installed. Sign out and back in to activate it.".into()
     })
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+    #[test]
+    fn engine_updates_follow_bundle_and_installation_hashes_even_with_the_same_tag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tmp.path();
+        assert!(updates_for(state, "bundle-a").unwrap().is_empty());
+        let record = b"installed compositor";
+        fs::write(state.join(Component::Compositor.record()), record).unwrap();
+        assert_eq!(
+            updates_for(state, "bundle-a").unwrap(),
+            vec![Component::Compositor]
+        );
+        fs::write(
+            state.join("engine-compositor-receipt.json"),
+            serde_json::to_vec(&receipt(Component::Compositor, "bundle-a", record)).unwrap(),
+        )
+        .unwrap();
+        assert!(updates_for(state, "bundle-a").unwrap().is_empty());
+        assert_eq!(
+            updates_for(state, "bundle-b").unwrap(),
+            vec![Component::Compositor]
+        );
+        fs::write(
+            state.join(Component::Compositor.record()),
+            b"changed installation",
+        )
+        .unwrap();
+        assert_eq!(
+            updates_for(state, "bundle-a").unwrap(),
+            vec![Component::Compositor]
+        );
+        fs::remove_file(state.join(Component::Compositor.record())).unwrap();
+        assert!(updates_for(state, "bundle-b").unwrap().is_empty());
+    }
 }
