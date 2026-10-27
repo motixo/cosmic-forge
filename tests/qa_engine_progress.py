@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/cosmic-forge')
-    parser.add_argument('--engine-binary', type=Path, default=ROOT / 'engine/build/bin/cosmic-comp')
+    parser.add_argument('--engine-binary', type=Path, help='Use a local binary instead of downloading the release')
     args = parser.parse_args()
     packages = {name: subprocess.check_output(['/usr/bin/pacman', '-Q', name], text=True).strip()
                 for name in ('cosmic-comp', 'cosmic-settings', 'cosmic-panel', 'cosmic-greeter')}
@@ -49,8 +49,14 @@ def main():
             legacy_record.parent.mkdir(parents=True)
             legacy_record.write_text(json.dumps({'shims': {'cosmic-comp': legacy.decode()}}))
             preserved = {p: p.read_bytes() for p in [settings, legacy_record]}
-            subprocess.run(['python3', str(ROOT / 'engine/install.py'), '--binary', str(args.engine_binary.resolve())],
-                           env=env, check=True, capture_output=True)
+            install = ['python3', str(ROOT / 'engine/install.py')]
+            if args.engine_binary:
+                install += ['--binary', str(args.engine_binary.resolve())]
+            initial = subprocess.run(install, env=env, check=True, capture_output=True, text=True)
+            (artifacts / 'initial-install.log').write_text(initial.stdout + initial.stderr)
+            if not args.engine_binary:
+                assert 'FORGE_PROGRESS:downloading_binary' in initial.stdout
+                assert 'FORGE_PROGRESS:building' not in initial.stdout
             state = Path(env['XDG_STATE_HOME']) / 'cosmic-forge'
             record_path = state / 'engine-installation.json'
             record = json.loads(record_path.read_text())
@@ -79,6 +85,19 @@ def main():
             assert before == {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns) for p in paths}
             text = log.read_text()
             assert 'FORGE_PROGRESS:building' not in text and 'FORGE_PROGRESS:installing' not in text
+            log.unlink()
+            session.scroll_to_bottom()
+            session.click(600, 730)
+            deadline = time.monotonic() + 100
+            while time.monotonic() < deadline:
+                if log.exists() and 'FORGE_PROGRESS:already_installed' in log.read_text():
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError('Build did not reuse the matching compositor')
+            time.sleep(0.5)
+            assert before == {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns) for p in paths}
+            assert 'FORGE_PROGRESS:building' not in log.read_text()
             recovery = state / 'engine-previous-compositor'
             engine = Path(record['destination']) / 'cosmic-comp'
             original = Path('/usr/bin/cosmic-comp')
@@ -104,6 +123,8 @@ def main():
                 session.capture('restore-legacy' if legacy_only else 'restore-forge').save(
                     artifacts / ('restore-legacy.png' if legacy_only else 'restore-forge.png'))
             (artifacts / 'results.json').write_text(json.dumps({'animated_progress': True, 'already_installed': True,
+                                                             'prebuilt_download': not bool(args.engine_binary),
+                                                             'build_reuses_matching_binary': True,
                                                              'no_rebuild_or_reinstall': True,
                                                              'restore_forge_to_system': True,
                                                              'restore_legacy_to_system': True,

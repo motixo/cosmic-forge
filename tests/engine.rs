@@ -183,10 +183,106 @@ fn engine_cache_preserves_symlinks_and_their_targets() {
 }
 
 #[test]
+fn install_and_build_route_to_distinct_installer_actions_in_the_same_release() {
+    if std::env::var_os("FORGE_TEST_ACTION_CHILD").is_some() {
+        for action in [engine::Action::Install, engine::Action::Build] {
+            let mut stages = Vec::new();
+            assert!(
+                engine::setup(action, |stage| stages.push(stage))
+                    .unwrap()
+                    .contains("already installed")
+            );
+            assert!(stages.contains(&engine::Progress::Downloading));
+            assert_eq!(stages.last(), Some(&engine::Progress::AlreadyInstalled));
+        }
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let tools = root.join("tools");
+    fs::create_dir(&tools).unwrap();
+    let installer = r#"import argparse,json,os
+from pathlib import Path
+p=argparse.ArgumentParser()
+p.add_argument('--build',action='store_true')
+p.add_argument('--release-tag',required=True)
+a=p.parse_args()
+with Path(os.environ['FORGE_ACTION_AUDIT']).open('a') as f:
+    f.write(json.dumps({'build':a.build,'tag':a.release_tag})+'\n')
+print('FORGE_PROGRESS:already_installed',flush=True)
+"#;
+    let bytes = serde_json::to_vec(&json!({"format":1,"abi":1,"files":{
+        "install.py":installer,"build.py":"","recovery.py":"",
+        "release.json":"{\"abi\":1,\"renderer_revision\":2}"
+    }}))
+    .unwrap();
+    let mut metadata = release(&bytes);
+    metadata["tag_name"] = json!("engine-test-actions");
+    fs::write(
+        root.join("release.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    fs::write(root.join("bundle.json"), bytes).unwrap();
+    let curl = tools.join("curl");
+    fs::write(
+        &curl,
+        r#"#!/usr/bin/python3
+import os,sys
+from pathlib import Path
+root=Path(os.environ['FORGE_ACTION_FIXTURE'])
+source='release.json' if sys.argv[-1].endswith('/releases/latest') else 'bundle.json'
+Path(sys.argv[sys.argv.index('--output')+1]).write_bytes((root/source).read_bytes())
+sys.stdout.write('200')
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+    let audit = root.join("audit.jsonl");
+    let result = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "install_and_build_route_to_distinct_installer_actions_in_the_same_release",
+            "--nocapture",
+        ])
+        .env("FORGE_TEST_ACTION_CHILD", "1")
+        .env("FORGE_ACTION_FIXTURE", root)
+        .env("FORGE_ACTION_AUDIT", &audit)
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env(
+            "PATH",
+            format!("{}:{}", tools.display(), std::env::var("PATH").unwrap()),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let calls: Vec<Value> = fs::read_to_string(audit)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            json!({"build":false,"tag":"engine-test-actions"}),
+            json!({"build":true,"tag":"engine-test-actions"})
+        ]
+    );
+}
+
+#[test]
 fn offline_recovery_restores_original_compositor_without_the_source_checkout() {
     if std::env::var_os("FORGE_TEST_RESTORE_CHILD").is_some() {
         let mut stages = Vec::new();
-        let result = cosmic_forge::engine::setup(true, |stage| stages.push(stage));
+        let result =
+            cosmic_forge::engine::setup(engine::Action::Restore, |stage| stages.push(stage));
         if !std::path::Path::new("/usr/bin/cosmic-comp").exists() {
             assert!(
                 result

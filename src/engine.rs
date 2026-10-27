@@ -127,9 +127,17 @@ pub fn prepare_from_release(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Install,
+    Build,
+    Restore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress {
     Checking,
     Downloading,
+    DownloadingBinary,
     Preparing,
     Building,
     Installing,
@@ -143,6 +151,7 @@ impl Progress {
         Some(match line.strip_prefix("FORGE_PROGRESS:")? {
             "checking" => Self::Checking,
             "downloading" => Self::Downloading,
+            "downloading_binary" => Self::DownloadingBinary,
             "preparing" => Self::Preparing,
             "building" => Self::Building,
             "installing" => Self::Installing,
@@ -156,6 +165,7 @@ impl Progress {
         match self {
             Self::Checking => "Checking installed renderer…",
             Self::Downloading => "Downloading the compositor engine package…",
+            Self::DownloadingBinary => "Downloading the prebuilt compositor…",
             Self::Preparing => "Downloading and patching compositor source…",
             Self::Building => "Compiling the glass renderer…",
             Self::Installing => "Installing the glass renderer…",
@@ -169,7 +179,9 @@ impl Progress {
     }
 }
 
-pub fn setup(restore: bool, mut progress: impl FnMut(Progress)) -> Result<String> {
+pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<String> {
+    let restore = action == Action::Restore;
+    let mut release_tag = None;
     progress(Progress::Checking);
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
     let root = if restore {
@@ -191,6 +203,8 @@ pub fn setup(restore: bool, mut progress: impl FnMut(Progress)) -> Result<String
             status == 200,
             "No compositor engine release has been published yet"
         );
+        let metadata: serde_json::Value = serde_json::from_slice(&release)?;
+        release_tag = metadata["tag_name"].as_str().map(str::to_owned);
         prepare_from_release(&cache, &release, |url| {
             let (status, bytes) = crate::packs::download(url)?;
             ensure!(status == 200, "The engine release asset is unavailable");
@@ -207,6 +221,14 @@ pub fn setup(restore: bool, mut progress: impl FnMut(Progress)) -> Result<String
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?);
+    if !restore {
+        if let Some(tag) = release_tag {
+            command.args(["--release-tag", &tag]);
+        }
+        if action == Action::Build {
+            command.arg("--build");
+        }
+    }
     let mut child = command
         .spawn()
         .context("The engine installer requires Python 3")?;

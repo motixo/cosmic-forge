@@ -45,6 +45,7 @@ pub enum Message {
     Imported(Option<Result<Vec<std::path::PathBuf>, String>>),
     RemoveEffect,
     InstallEngine,
+    BuildEngine,
     RestoreEngine,
     CheckUpdates,
     Tick,
@@ -74,6 +75,7 @@ pub struct Forge {
     engine_note: Option<&'static str>,
     transfer: Option<std::sync::mpsc::Receiver<TransferEvent>>,
     engine_progress: Option<engine::Progress>,
+    renderer_note: String,
     update_note: String,
     checked: Instant,
     catalog_stamp: u64,
@@ -127,19 +129,26 @@ impl Forge {
         }
         let (sender, receiver) = std::sync::mpsc::channel();
         self.transfer = Some(receiver);
-        self.update_note = note.into();
+        self.transfer_note(note.into());
         std::thread::spawn(move || {
             let result = work(sender.clone()).map_err(|e| format!("{e:#}"));
             let _ = sender.send(TransferEvent::Finished(result));
         });
     }
-    fn start_engine(&mut self, restore: bool) {
+    fn transfer_note(&mut self, note: String) {
+        if self.engine_progress.is_some() {
+            self.renderer_note = note;
+        } else {
+            self.update_note = note;
+        }
+    }
+    fn start_engine(&mut self, action: engine::Action) {
         if self.transfer.is_some() {
             return;
         }
         self.engine_progress = Some(engine::Progress::Checking);
         self.start_transfer("Checking the glass renderer…", move |sender| {
-            engine::setup(restore, |progress| {
+            engine::setup(action, |progress| {
                 let _ = sender.send(TransferEvent::Progress(progress));
             })
         });
@@ -300,15 +309,18 @@ impl Forge {
                     .toggler(self.store.category(key), move |v| Message::Category(key, v)),
             );
         }
-        let mut install = button::standard("Install / update compositor");
+        let mut install = button::standard("Install compositor");
+        let mut build = button::standard("Build compositor");
         let mut restore = button::standard("Restore original COSMIC compositor");
         if self.transfer.is_none() {
             install = install.on_press(Message::InstallEngine);
+            build = build.on_press(Message::BuildEngine);
             restore = restore.on_press(Message::RestoreEngine);
         }
         let mut renderer_content = widget::column::with_capacity(4).spacing(16)
-            .push(text::body("Requires COSMIC 1.10 or 1.11. Install the glass compositor, then sign out and back in. The first build can take several minutes."))
-            .push(install).push(restore);
+            .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install a prebuilt compositor or build from source, then sign out and back in."))
+            .push(widget::row::with_capacity(3).spacing(12).align_y(iced::Alignment::Center)
+                .push(install).push(text::body("or")).push(build)).push(restore);
         if let Some(progress) = self.engine_progress {
             let mut bar = widget::progress_bar::linear::Linear::new()
                 .width(Length::Fill)
@@ -322,6 +334,9 @@ impl Forge {
                     .push(text::body(progress.label()))
                     .push(bar),
             );
+        }
+        if self.engine_progress.is_none() && !self.renderer_note.is_empty() {
+            renderer_content = renderer_content.push(text::caption(self.renderer_note.as_str()));
         }
         let renderer = settings::section()
             .title("Compositor")
@@ -414,6 +429,7 @@ impl cosmic::Application for Forge {
             engine_note,
             transfer: None,
             engine_progress: None,
+            renderer_note: String::new(),
             update_note: String::new(),
             checked: Instant::now(),
             catalog_stamp: packs::fingerprint(&packs::root()),
@@ -601,15 +617,15 @@ impl cosmic::Application for Forge {
                     self.transfer = None;
                     match result {
                         Ok(note) => {
-                            self.update_note = note;
+                            self.transfer_note(note);
                             (self.status, self.engine_note) = store::engine_status();
                             if let Err(e) = self.reload_effects() {
                                 self.error = Some(format!("{e:#}"));
                             }
                         }
                         Err(note) => {
+                            self.transfer_note(note);
                             self.engine_progress = None;
-                            self.update_note = note;
                         }
                     }
                 }
@@ -677,8 +693,9 @@ impl cosmic::Application for Forge {
                 self.report(result);
             }
             Message::CheckUpdates => self.check_updates(),
-            Message::InstallEngine => self.start_engine(false),
-            Message::RestoreEngine => self.start_engine(true),
+            Message::InstallEngine => self.start_engine(engine::Action::Install),
+            Message::BuildEngine => self.start_engine(engine::Action::Build),
+            Message::RestoreEngine => self.start_engine(engine::Action::Restore),
             Message::Import => {
                 return cosmic::task::future(async {
                     use cosmic::dialog::file_chooser;

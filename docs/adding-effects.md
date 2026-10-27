@@ -193,22 +193,35 @@ runs its checks and publishes revision N independently of app releases.
 
 Existing installed Crystal/Aero binaries render only the built-in effects. New
 source and custom parameters require the Forge renderer ABI 1 in `engine/` once.
-On Arch Linux and derivatives with matching COSMIC 1.10.0 or 1.11.0 packages, open
-the gear page and choose **Install / update compositor**. Forge downloads the
+On Arch Linux, Fedora, Ubuntu or Pop!_OS with a supported COSMIC release from
+1.10 onward, open Settings and choose **Install compositor**. Published pins
+currently cover 1.10.0 and 1.11.0; future tested versions are added to the engine
+release independently of app releases. Forge downloads the
 latest stable `cosmic-forge-engine.json` release from **motixo/cosmic-forge-engine**.
 The app checks the repository URL, asset size, GitHub SHA-256 digest, bundle paths
 and ABI before using its installer. Engine fixes and compatible renderer revisions
 can be published independently of app releases. The source checkout is not needed
-at runtime. The first build downloads pinned upstream
-source and Cargo dependencies and requires Python 3, Rust, Git and the compositor
-build libraries. Build progress is logged to
+at runtime. The Install action downloads an XZ-compressed prebuilt executable matched to
+COSMIC and the CPU architecture. It requires Python 3, curl, glibc 2.35+ and the
+COSMIC runtime libraries. The asset repository, SHA-256, size, decompression limit,
+ELF architecture and embedded revision are checked before installation. A missing
+or incompatible binary reports an error and suggests **Build compositor**.
+
+The separate **Build compositor** action downloads pinned upstream source and
+Cargo dependencies and requires Python 3, Rust, Git and the compositor build
+libraries. Build caches are shared across engine releases at
+`$XDG_CACHE_HOME/cosmic-forge/engine-target/<version>`. The app never silently
+starts a source build from the Install action. Both methods recheck the captured
+COSMIC packages before changing the launcher. Build progress is logged to
 `$XDG_STATE_HOME/cosmic-forge/engine-build.log`. The operation runs in the background
 and never stops the current session. A native progress bar shows the current stage
-(downloading the engine package, checking, preparing source, compiling, installing or restoring). Download/compile
+(downloading the engine package or binary, checking, preparing source, compiling, installing or restoring). Download/compile
 phases use an animated bar because their duration is not known; completion fills
-the bar. After downloading the small engine package and before fetching upstream
-source or compiling, Forge checks the renderer revision,
-exact COSMIC package versions, launcher ownership and binary checksum. A matching
+the bar. After downloading the small engine package and before downloading a
+compositor, fetching upstream source or compiling, Forge checks the renderer revision,
+exact COSMIC package versions, launcher ownership and binary checksum.
+Package queries and launcher guards use pacman, rpm or dpkg-query as appropriate.
+Pop snapshot packages can be matched by their pinned compositor commit. A matching
 installation finishes immediately without rebuilding or rewriting its files.
 
 A missing, incompatible or damaged engine release leaves the installed renderer

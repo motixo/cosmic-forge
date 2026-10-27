@@ -20,7 +20,9 @@ python scripts/install.py
 cosmic-forge
 ```
 
-The in-app compositor installer supports Arch Linux with COSMIC 1.10/1.11.
-Install or restore the compositor in Settings, then sign out and back in.
+Supports Arch Linux, Fedora, Ubuntu and Pop!_OS with tested COSMIC releases from
+1.10 onward (currently 1.10/1.11). In Settings, **Install compositor** downloads a
+verified prebuilt binary; **Build compositor** builds pinned source. Prebuilt
+binaries support x86_64/ARM64 with glibc 2.35+. Sign out and back in to activate.
 
 [Adding effects](docs/adding-effects.md) · GPL-3.0-only
