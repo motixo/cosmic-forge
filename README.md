@@ -1,8 +1,10 @@
 # COSMIC Forge
 
-A native COSMIC app for Frosted Glass, Crystal, Aero and community glass effects.
-Adjust opacity and glass surfaces, import JSON + `.frag` effects, and manage the
-glass compositor from Settings. Shader packs update from
+A native mod manager for the **COSMIC desktop**. Currently supports glass shader
+effects: Frosted Glass, Crystal, Aero and community effects.
+
+Adjust effects, import JSON + `.frag` files and manage the glass compositor from
+Settings. Shaders are maintained in
 [cosmic-forge-shaders](https://github.com/motixo/cosmic-forge-shaders).
 
 ## Build and install

@@ -30,7 +30,7 @@ require a fresh work directory. Cargo uses the upstream lockfile. This builder
 produces only the compositor, not a replacement COSMIC Settings. It does not
 install, change launchers, terminate processes or restart the user's desktop.
 The resulting executable is `engine/build/bin/cosmic-comp`. Forge settings provides
-**Install / update glass renderer** and **Restore original COSMIC compositor**.
+**Install / update compositor** and **Restore original COSMIC compositor**.
 This setup currently supports Arch Linux and derivatives with matching
 COSMIC 1.10.0/1.11.0 compositor, Settings, panel and greeter packages. The tools and
 pinned patches are bundled in the native executable and extracted to its cache.

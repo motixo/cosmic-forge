@@ -131,7 +131,7 @@ runs its checks and publishes revision N independently of app releases.
 Existing installed Crystal/Aero binaries render only the built-in effects. New
 source and custom parameters require the Forge renderer ABI 1 in `engine/` once.
 On Arch Linux and derivatives with matching COSMIC 1.10.0 or 1.11.0 packages, open
-the gear page and choose **Install / update glass renderer**. Forge carries the
+the gear page and choose **Install / update compositor**. Forge carries the
 pinned patches and builder inside its executable; the source checkout does not
 need to stay at a particular path. The first build downloads pinned upstream
 source and Cargo dependencies and requires Python 3, Rust, Git and the compositor

@@ -300,7 +300,7 @@ impl Forge {
                     .toggler(self.store.category(key), move |v| Message::Category(key, v)),
             );
         }
-        let mut install = button::standard("Install / update glass renderer");
+        let mut install = button::standard("Install / update compositor");
         let mut restore = button::standard("Restore original COSMIC compositor");
         if self.transfer.is_none() {
             install = install.on_press(Message::InstallEngine);
@@ -332,21 +332,21 @@ impl Forge {
                 .push(text::body(
                     "Import glass effects and keep your shader packs up to date.",
                 ))
-                .push(button::standard("Import glass effect…").on_press(Message::Import))
+                .push(button::standard("Import effect").on_press(Message::Import))
                 .push(text::caption(
                     "Select a JSON pack, or select both a .frag file and its JSON settings.",
                 ))
                 .push(button::standard("Check for effect updates").on_press(Message::CheckUpdates))
-                .push(text::caption(self.update_note.as_str()))
+                .push_maybe(
+                    (!self.update_note.is_empty())
+                        .then(|| text::caption(self.update_note.as_str())),
+                )
                 .push(button::standard("Open effects folder").on_press(Message::Folder)),
         );
         widget::column::with_capacity(5)
             .spacing(24)
             .push(text::title2("Settings"))
             .push(section)
-            .push(text::caption(
-                "Window transparency also depends on the application and your COSMIC theme.",
-            ))
             .push(effects)
             .push(renderer)
             .into()
@@ -414,7 +414,7 @@ impl cosmic::Application for Forge {
             engine_note,
             transfer: None,
             engine_progress: None,
-            update_note: "Community packs can be installed from a JSON file.".into(),
+            update_note: String::new(),
             checked: Instant::now(),
             catalog_stamp: packs::fingerprint(&packs::root()),
         };
