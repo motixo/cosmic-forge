@@ -1,0 +1,130 @@
+name: Forge checks and releases
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -p 'test_release.py' -v
+      - run: sh -n install.sh scripts/test_package.sh
+
+  binary:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: '1.93.1'
+          components: rustfmt, clippy
+          rustflags: ''
+      - name: Build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake libfontconfig1-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libdbus-1-dev libudev-dev libssl-dev libvulkan-dev rpm libarchive-tools zstd desktop-file-utils
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: forge-${{ runner.arch }}-rust1.93.1-glibc2.35-${{ hashFiles('Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked --no-default-features
+      - run: cargo build --release --locked
+      - run: python -m unittest discover -s tests -p 'test_install.py' -v
+      - name: Package native releases
+        run: |
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
+          python scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ runner.arch }}
+          path: build/release/*
+
+  runtime:
+    needs: binary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, arch: X64, image: 'ubuntu:24.04', format: deb, name: ubuntu-x64}
+          - {runner: ubuntu-24.04, arch: X64, image: 'fedora:43', format: rpm, name: fedora43-x64}
+          - {runner: ubuntu-24.04, arch: X64, image: 'fedora:45', format: rpm, name: fedora45-x64}
+          - {runner: ubuntu-24.04, arch: X64, image: 'archlinux:base', format: arch, name: arch-x64}
+          - {runner: ubuntu-24.04-arm, arch: ARM64, image: 'ubuntu:24.04', format: deb, name: ubuntu-arm64}
+          - {runner: ubuntu-24.04-arm, arch: ARM64, image: 'fedora:43', format: rpm, name: fedora43-arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: release
+      - name: Install, open and remove native package
+        env:
+          IMAGE: ${{ matrix.image }}
+          FORMAT: ${{ matrix.format }}
+        run: |
+          mkdir -p build/runtime
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/release:/release:ro" -v "$PWD/build/runtime:/results" "$IMAGE" sh /src/scripts/test_package.sh "$FORMAT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-${{ matrix.name }}
+          path: build/runtime/**/screenshots/*.png
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check, binary, runtime]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: build/release
+      - name: Package complete source and checksums
+        run: |
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct)
+          python3 scripts/package_release.py --source-only
+          cp install.sh build/release/install.sh
+          cd build/release
+          sha256sum *.deb *.rpm *.pkg.tar.zst *.tar.xz install.sh > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" build/release/* --verify-tag --latest --title "COSMIC Forge ${TAG#v}" --notes-file .github/release-notes.md
