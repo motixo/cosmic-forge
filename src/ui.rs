@@ -493,7 +493,7 @@ impl cosmic::Application for Forge {
         ) -> Element<'a, cosmic::Action<Message>> {
             widget::column::with_capacity(2)
                 .spacing(4)
-                .push(widget::container(text::caption_heading(title)).padding([8, 16]))
+                .push(widget::container(text::heading(title).size(16)).padding([8, 16]))
                 .push(
                     widget::segmented_button::vertical(model)
                         .button_height(32)

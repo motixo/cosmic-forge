@@ -149,7 +149,7 @@ class Session:
         return image
 
     def select_effect(self, index):
-        self.click(100, 108 + 40 * index)
+        self.click(100, 112 + 40 * index)
 
     def scroll_to_bottom(self):
         xtest.fake_input(self.display, X.MotionNotify, x=750, y=650)

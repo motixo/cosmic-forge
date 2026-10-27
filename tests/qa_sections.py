@@ -26,13 +26,13 @@ def main():
     try:
         before = {p: p.read_bytes() for p in session.config.rglob('*') if p.is_file()}
         session.capture('grouped-sidebar')
-        session.click(100, 274)
+        session.click(100, 282)
         panel = capture('panel')
         session.click(856, 24)
         session.click(856, 24)
         assert same(panel, capture('panel-after-settings')), 'Settings did not return to Panel'
         results['settings_returns_to_panel'] = True
-        session.click(100, 358)
+        session.click(100, 370)
         lock = capture('lock-screen')
         assert not same(panel, lock), 'Lock screen did not open its own page'
         session.click(856, 24)
@@ -52,7 +52,7 @@ def main():
                        env=session.environment, check=True, capture_output=True)
         time.sleep(1.3)
         assert same(lock, capture('import-keeps-page')), 'Importing an effect replaced Lock screen'
-        session.click(100, 314)
+        session.click(100, 322)
         assert same(panel, capture('panel-after-import')), 'Catalog reload lost the Panel item'
         results['catalog_reload_preserves_sections'] = True
         session.select_effect(0)
