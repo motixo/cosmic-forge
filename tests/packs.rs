@@ -31,9 +31,85 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     let effects = catalog::load(&root.join("effects")).unwrap();
     assert_eq!(
         effects.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-        ["frosted", "crystal", "aero"]
+        ["frosted", "crystal", "aero", "liquid-glass"]
     );
     assert!(effects[1..].iter().all(|e| e.shader.is_some()));
+    let liquid = effects.iter().find(|e| e.id == "liquid-glass").unwrap();
+    assert_eq!(liquid.shader.as_ref().unwrap().base, "glass");
+    assert_eq!(liquid.shader.as_ref().unwrap().renderer_revision(), 2);
+    let mut store = Store::new(temp.path().join("config"), temp.path().join("state"));
+    store.select_effect(liquid).unwrap();
+    let runtime: RuntimeEffect =
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+    assert!(runtime.valid());
+    assert_eq!(runtime.glass_blur(), 12);
+    assert_eq!(
+        runtime
+            .parameters
+            .iter()
+            .find(|p| p.name == "forge_liquid_refraction")
+            .unwrap()
+            .value,
+        80.0
+    );
+    assert!(
+        !liquid
+            .controls
+            .iter()
+            .any(|c| c.key == "forge_liquid_background_blend")
+    );
+    let lensing = liquid
+        .controls
+        .iter()
+        .find(|c| c.key == "forge_liquid_refraction")
+        .unwrap();
+    assert_eq!(lensing.label, "Lensing");
+    let clear_center = liquid
+        .controls
+        .iter()
+        .find(|c| c.key == "forge_liquid_clear_center")
+        .unwrap();
+    assert_eq!(store.value(clear_center), json!(40));
+    let dispersion = liquid
+        .controls
+        .iter()
+        .find(|c| c.key == "forge_liquid_dispersion")
+        .unwrap();
+    assert_eq!(store.value(dispersion), json!(5));
+    store.set_control(dispersion, &json!(8)).unwrap();
+    store.set_control(lensing, &json!(35)).unwrap();
+    store.set_control(clear_center, &json!(60)).unwrap();
+    store.select_effect(&effects[2]).unwrap();
+    store.select_effect(liquid).unwrap();
+    let runtime: RuntimeEffect =
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+    assert_eq!(
+        runtime
+            .parameters
+            .iter()
+            .find(|p| p.name == "forge_liquid_refraction")
+            .unwrap()
+            .value,
+        35.0
+    );
+    assert_eq!(
+        runtime
+            .parameters
+            .iter()
+            .find(|p| p.name == "forge_liquid_clear_center")
+            .unwrap()
+            .value,
+        60.0
+    );
+    assert_eq!(
+        runtime
+            .parameters
+            .iter()
+            .find(|p| p.name == "forge_liquid_dispersion")
+            .unwrap()
+            .value,
+        8.0
+    );
 }
 
 fn sample() -> Vec<u8> {
