@@ -503,7 +503,7 @@ impl cosmic::Application for Forge {
     fn dialog(&self) -> Option<Element<'_, Message>> {
         if self.needs_engine {
             return Some(widget::dialog().title("Glass compositor required")
-                .body("To use this effect, install the glass compositor from Settings, then sign out and back in.")
+                .body("To use this effect, install or update the glass compositor from Settings, then sign out and back in.")
                 .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
                 .secondary_action(button::standard("Cancel").on_press(Message::DismissEngine)).into());
         }

@@ -485,10 +485,10 @@ fn numeric(value: &Value) -> f32 {
     )
 }
 
-fn installed_engine(state: &Path, launcher: &Path, forge_only: bool) -> Option<PathBuf> {
+fn installed_engine(state: &Path, launcher: &Path, minimum_revision: u64) -> Option<PathBuf> {
     let forge = state.join("cosmic-forge/engine-installation.json");
     let is_forge = forge.is_file();
-    if forge_only && !is_forge || launcher.is_symlink() {
+    if minimum_revision > 0 && !is_forge || launcher.is_symlink() {
         return None;
     }
     let record = if is_forge {
@@ -503,7 +503,8 @@ fn installed_engine(state: &Path, launcher: &Path, forge_only: bool) -> Option<P
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        if record["abi"] != 1
+        if record["renderer_revision"].as_u64().unwrap_or(1) < minimum_revision
+            || record["abi"] != 1
             || record["launcher"].as_str()? != launcher.to_str()?
             || record["launcher_sha256"].as_str()? != digest
         {
@@ -523,7 +524,10 @@ pub fn effect_available(effect: &Effect) -> bool {
         || installed_engine(
             &xdg("XDG_STATE_HOME", ".local/state"),
             &xdg("HOME", "").join(".local/bin/cosmic-comp"),
-            effect.shader.is_some(),
+            effect
+                .shader
+                .as_ref()
+                .map_or(0, |shader| shader.renderer_revision()),
         )
         .is_some()
 }
@@ -532,7 +536,7 @@ pub fn engine_status() -> (&'static str, Option<&'static str>) {
     if let Some(installed) = installed_engine(
         &xdg("XDG_STATE_HOME", ".local/state"),
         &xdg("HOME", "").join(".local/bin/cosmic-comp"),
-        false,
+        0,
     ) {
         if let (Ok(installed), Ok(own), Ok(processes)) = (
             fs::metadata(installed),
@@ -596,11 +600,8 @@ mod engine_tests {
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            installed_engine(&state, &launcher, false),
-            Some(binary.clone())
-        );
-        assert!(installed_engine(&state, &launcher, true).is_none());
+        assert_eq!(installed_engine(&state, &launcher, 0), Some(binary.clone()));
+        assert!(installed_engine(&state, &launcher, 1).is_none());
         let digest: String = Sha256::digest(current)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -613,18 +614,21 @@ mod engine_tests {
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            installed_engine(&state, &launcher, true),
-            Some(binary.clone())
-        );
+        assert_eq!(installed_engine(&state, &launcher, 1), Some(binary.clone()));
+        assert!(installed_engine(&state, &launcher, 2).is_none());
+        let record_path = state.join("cosmic-forge/engine-installation.json");
+        let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        record["renderer_revision"] = json!(2);
+        fs::write(record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(installed_engine(&state, &launcher, 2), Some(binary.clone()));
         fs::write(&launcher, b"another compositor").unwrap();
-        assert!(installed_engine(&state, &launcher, false).is_none());
+        assert!(installed_engine(&state, &launcher, 0).is_none());
         fs::write(&launcher, current).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(installed_engine(&state, &launcher, true).is_none());
+        assert!(installed_engine(&state, &launcher, 1).is_none());
         fs::remove_file(&binary).unwrap();
-        assert!(installed_engine(&state, &launcher, true).is_none());
+        assert!(installed_engine(&state, &launcher, 1).is_none());
         fs::remove_file(&launcher).unwrap();
-        assert!(installed_engine(&state, &launcher, false).is_none());
+        assert!(installed_engine(&state, &launcher, 0).is_none());
     }
 }

@@ -71,7 +71,7 @@ fn published_engine_sources_and_new_revisions_work_without_rebuilding_the_app() 
             .unwrap(),
         before
     );
-    // An installer update keeps renderer revision 1 and needs no app rebuild.
+    // Installer updates keep the renderer revision and need no app rebuild.
     bundle["files"]["install.py"] = json!(format!(
         "{}\n# installer update\n",
         bundle["files"]["install.py"].as_str().unwrap()
@@ -85,7 +85,7 @@ fn published_engine_sources_and_new_revisions_work_without_rebuilding_the_app() 
     );
     let mut metadata: Value =
         serde_json::from_str(bundle["files"]["release.json"].as_str().unwrap()).unwrap();
-    metadata["renderer_revision"] = json!(2);
+    metadata["renderer_revision"] = json!(metadata["renderer_revision"].as_u64().unwrap() + 1);
     bundle["files"]["release.json"] = json!(metadata.to_string());
     assert_ne!(prepare(cache.path(), &bundle).unwrap(), updated);
 }

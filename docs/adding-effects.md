@@ -60,7 +60,8 @@ an `effects` array. Each effect has the same metadata and controls as
 }
 ```
 
-`base` is `aero` or `crystal`. Start with the matching shader in `shaders/shaders/`.
+`base` is `glass`, `aero` or `crystal`. Generic `glass` requires Forge 0.5+
+and renderer revision 2 or newer. Start with the matching shader in `shaders/shaders/`.
 Keep Smithay's texture, clipping, alpha and debug variants. The shader receives
 the existing uniforms from that base pipeline. Aero supplies `aero_color`,
 `aero_reflections`, `blur_amount`, `theme_tint`, `theme_accent`, geometry, rounded
@@ -96,6 +97,67 @@ changes redraw without recompiling. Compile failures fall back to the selected
 built-in glass pipeline and log `Forge shader rejected`. Corrected source recovers
 without restarting. Packs are GPU code: only import shaders from creators you trust.
 Forge displays descriptions and controls; it has no sample image or embedded shader preview.
+
+## Generic glass base
+
+Use `shader.base: "glass"` for a neutral pipeline with no Aero reflections,
+Crystal facets, tint or refraction built in. `shaders/shaders/glass.frag` is the
+editable template. The importable pair in `shaders/examples/plain-glass/` provides
+independent blur plus shared opacity:
+
+```sh
+cosmic-forge --import-pack shaders/examples/plain-glass/plain-glass.json \
+  shaders/examples/plain-glass/plain-glass.frag
+```
+
+The example is optional and is not added to the built-in catalog. Importing it
+adds **Plain Glass** to the sidebar. The app prompts for a compositor update if
+renderer revision 2 is not installed. Activate the updated compositor at the next
+login; subsequent shader edits only need reimporting.
+
+Map the reserved float uniform name `forge_blur` to your own integer control key:
+
+```json
+"shader": {
+  "base": "glass",
+  "uniforms": { "forge_blur": "forge_my_effect_blur" }
+}
+```
+
+Define `forge_my_effect_blur` in `controls` with integer bounds inside 0–100.
+The engine reads this parameter before blurring; its default is 45 if omitted.
+Use a different key for each effect to retain independent values. No Aero or
+Crystal preferences are changed. Opacity remains the existing shared theme value.
+Other custom float uniforms work as before. This base adds no animation, external
+images or extra render passes.
+
+| Shader input | Meaning |
+| --- | --- |
+| `tex` | Captured background after the selected blur; sharp at blur 0 |
+| `sharp_tex` | Original captured background before blur |
+| `v_coords` | Texture UV for the captured background |
+| `input_to_geo` | Transform `vec3(v_coords, 1)` into surface-local UV |
+| `geo_size` | Surface size in logical units |
+| `corner_radius` | Surface corner radii |
+| `uv_per_pixel` | UV step per logical pixel of the extended background capture |
+| `output_scale` | Output scale factor |
+| `blur_amount` | Selected blur normalized to 0–1 |
+| `theme_tint`, `theme_accent` | Current surface palette and accent RGB |
+| `alpha` | Compositor opacity multiplier |
+
+Preserve the template's clipping, premultiplied alpha and texture variants. Clamp
+custom sampling to the available capture; this base has no automatic refraction
+margin beyond the blur capture. An invalid shader falls back to neutral glass at
+the selected blur. Aero and Crystal packs continue to use their existing paths.
+
+To produce a self-contained community pack:
+
+```sh
+python shaders/scripts/package_effects.py \
+  --catalog shaders/examples/plain-glass/plain-glass.json \
+  --shader-dir shaders/examples/plain-glass --pack-id plain-glass --revision 1 \
+  --output build/plain-glass.json
+```
 
 ## Publishing updates on GitHub
 

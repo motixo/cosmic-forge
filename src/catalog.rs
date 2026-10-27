@@ -17,6 +17,12 @@ pub struct Shader {
     pub uniforms: BTreeMap<String, String>,
 }
 
+impl Shader {
+    pub fn renderer_revision(&self) -> u64 {
+        if self.base == "glass" { 2 } else { 1 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ControlKind {
@@ -145,6 +151,19 @@ impl Effect {
                     .collect(),
             };
             ensure!(runtime.valid(), "Invalid glass shader ABI");
+            if shader.base == "glass"
+                && let Some(key) = shader.uniforms.get("forge_blur")
+            {
+                let control = self
+                    .controls
+                    .iter()
+                    .find(|c| &c.key == key)
+                    .context("Glass blur references a missing control")?;
+                ensure!(
+                    control.kind == ControlKind::Integer && control.min >= 0 && control.max <= 100,
+                    "Generic glass blur must be an integer in 0–100"
+                );
+            }
             for key in shader.uniforms.values() {
                 let control = self
                     .controls

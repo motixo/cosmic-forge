@@ -58,6 +58,121 @@ fn pair(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
+fn generic_glass_imports_and_keeps_each_effects_blur_independent() {
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path().join("data");
+    let files = [
+        std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/examples/plain-glass/plain-glass.json"
+        )),
+        std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/examples/plain-glass/plain-glass.frag"
+        )),
+    ];
+    packs::import_files(&data, &files).unwrap();
+    let effects = catalog::load(&data.join("effects")).unwrap();
+    let first = &effects[3];
+    assert_eq!(first.shader.as_ref().unwrap().renderer_revision(), 2);
+    let mut second = first.clone();
+    second.id = "another-glass".into();
+    second.controls[0].key = "forge_another_blur".into();
+    second
+        .shader
+        .as_mut()
+        .unwrap()
+        .uniforms
+        .insert("forge_blur".into(), "forge_another_blur".into());
+    let mut store = Store::new(temp.path().join("config"), temp.path().join("state"));
+    fs::create_dir_all(&store.comp).unwrap();
+    fs::write(store.comp.join("aero_blur_amount"), "79\n").unwrap();
+    fs::write(store.comp.join("crystal_blur_amount"), "83\n").unwrap();
+    store.select_effect(first).unwrap();
+    store.set_control(&first.controls[0], &json!(17)).unwrap();
+    store.select_effect(&second).unwrap();
+    store.set_control(&second.controls[0], &json!(92)).unwrap();
+    let runtime = || -> RuntimeEffect {
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap()
+    };
+    assert_eq!(runtime().glass_blur(), 92);
+    store.select_effect(first).unwrap();
+    let current: RuntimeEffect =
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+    assert!(current.valid());
+    assert_eq!(current.base, "glass");
+    assert_eq!(current.glass_blur(), 17);
+    assert_eq!(
+        fs::read_to_string(store.comp.join("aero_blur_amount")).unwrap(),
+        "79\n"
+    );
+    assert_eq!(
+        fs::read_to_string(store.comp.join("crystal_blur_amount")).unwrap(),
+        "83\n"
+    );
+    assert_eq!(
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/engine/glass.frag")).unwrap(),
+        first.shader.as_ref().unwrap().source
+    );
+}
+
+#[test]
+fn generic_glass_validates_blur_bounds_and_allows_custom_parameters() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("glass.json");
+    let result = std::process::Command::new("python3")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/scripts/package_effects.py"
+        ))
+        .args([
+            "--catalog",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/shaders/examples/plain-glass/plain-glass.json"
+            ),
+            "--shader-dir",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/examples/plain-glass"),
+            "--pack-id",
+            "plain-glass",
+            "--revision",
+            "1",
+            "--output",
+        ])
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let good: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+    packs::parse(&serde_json::to_vec(&good).unwrap()).unwrap();
+    for (key, value) in [
+        ("min", json!(-1)),
+        ("max", json!(101)),
+        ("type", json!("boolean")),
+    ] {
+        let mut bad = good.clone();
+        bad["effects"][0]["controls"][0][key] = value;
+        assert!(packs::parse(&serde_json::to_vec(&bad).unwrap()).is_err());
+    }
+    let mut no_blur = good;
+    no_blur["effects"][0]["shader"]["uniforms"] = json!({});
+    let pack = packs::parse(&serde_json::to_vec(&no_blur).unwrap()).unwrap();
+    let runtime = RuntimeEffect {
+        abi: 1,
+        id: pack.effects[0].id.clone(),
+        base: "glass".into(),
+        source: pack.effects[0].shader.as_ref().unwrap().source.clone(),
+        parameters: vec![],
+    };
+    assert!(runtime.valid());
+    assert_eq!(runtime.glass_blur(), 45);
+}
+
+#[test]
 fn separate_frag_and_json_are_imported_as_a_self_contained_pack() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("data");
