@@ -219,7 +219,8 @@ class Session:
     def close(self):
         if self.app and self.app.poll() is None:
             if self.display:
-                subprocess.run(['setxkbmap', '-display', self.screen, '-layout', 'us'], check=False)
+                if shutil.which('setxkbmap'):
+                    subprocess.run(['setxkbmap', '-display', self.screen, '-layout', 'us'], check=False)
                 self.key('q', True)
             try:
                 self.app.wait(timeout=5)
