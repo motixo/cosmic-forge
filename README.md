@@ -4,8 +4,9 @@ A native mod manager for the **COSMIC desktop**. Currently supports glass shader
 effects: Frosted Glass, Crystal, Aero and community effects.
 
 Adjust effects, import JSON + `.frag` files and manage the glass compositor from
-Settings. Shaders are maintained in
-[cosmic-forge-shaders](https://github.com/motixo/cosmic-forge-shaders).
+Settings. Independent repositories maintain the
+[shaders](https://github.com/motixo/cosmic-forge-shaders) and
+[compositor engine](https://github.com/motixo/cosmic-forge-engine).
 
 ## Build and install
 

@@ -346,7 +346,7 @@ pub fn remove_effect(data_root: &Path, pack_id: &str, effect_id: &str) -> Result
     Ok(())
 }
 
-fn download(url: &str) -> Result<(u16, Vec<u8>)> {
+pub(crate) fn download(url: &str) -> Result<(u16, Vec<u8>)> {
     let file = tempfile::NamedTempFile::new()?;
     let result = Command::new("curl")
         .args([
@@ -365,7 +365,7 @@ fn download(url: &str) -> Result<(u16, Vec<u8>)> {
             "--max-filesize",
             "2097152",
             "--user-agent",
-            "COSMIC-Forge/0.3",
+            "COSMIC-Forge/0.4",
             "--write-out",
             "%{http_code}",
             "--output",
@@ -373,7 +373,7 @@ fn download(url: &str) -> Result<(u16, Vec<u8>)> {
         .arg(file.path())
         .arg(url)
         .output()
-        .context("Automatic updates require curl")?;
+        .context("GitHub downloads require curl")?;
     ensure!(
         result.status.success(),
         "GitHub download failed: {}",
@@ -389,7 +389,7 @@ fn download(url: &str) -> Result<(u16, Vec<u8>)> {
     Ok((status, read(file.path())?))
 }
 
-pub fn verified_asset(bytes: &[u8], digest: &str) -> Result<Pack> {
+pub(crate) fn verify_checksum(bytes: &[u8], digest: &str) -> Result<()> {
     let expected = digest
         .strip_prefix("sha256:")
         .context("Release asset needs a SHA-256 digest")?;
@@ -403,8 +403,13 @@ pub fn verified_asset(bytes: &[u8], digest: &str) -> Result<Pack> {
         .collect();
     ensure!(
         actual.eq_ignore_ascii_case(expected),
-        "Effect pack checksum mismatch"
+        "Release asset checksum mismatch"
     );
+    Ok(())
+}
+
+pub fn verified_asset(bytes: &[u8], digest: &str) -> Result<Pack> {
+    verify_checksum(bytes, digest)?;
     let pack = parse(bytes)?;
     ensure!(pack.id == OFFICIAL, "Unexpected official pack identifier");
     Ok(pack)

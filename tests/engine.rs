@@ -1,10 +1,189 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use base64::{Engine, engine::general_purpose::STANDARD};
+use cosmic_forge::engine::{self, ASSET, REPOSITORY};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, process::Command};
 
+fn bundle() -> Value {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join(ASSET);
+    let result = Command::new("python3")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/engine/scripts/package_engine.py"
+        ))
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    serde_json::from_slice(&fs::read(output).unwrap()).unwrap()
+}
+
+fn release(bytes: &[u8]) -> Value {
+    let digest: String = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    json!({"assets":[{
+        "name":ASSET, "size":bytes.len(), "digest":format!("sha256:{digest}"),
+        "browser_download_url":format!("https://github.com/{REPOSITORY}/releases/download/engine-v1/{ASSET}")
+    }]})
+}
+
+fn prepare(cache: &std::path::Path, bundle: &Value) -> anyhow::Result<std::path::PathBuf> {
+    let bytes = serde_json::to_vec(bundle).unwrap();
+    engine::prepare_from_release(
+        cache,
+        &serde_json::to_vec(&release(&bytes)).unwrap(),
+        |_| Ok(bytes),
+    )
+}
+
 #[test]
-fn bundled_setup_restores_original_compositor_without_the_source_checkout() {
+fn published_engine_sources_and_new_revisions_work_without_rebuilding_the_app() {
+    let cache = tempfile::tempdir().unwrap();
+    let mut bundle = bundle();
+    let root = prepare(cache.path(), &bundle).unwrap();
+    for (name, source) in bundle["files"].as_object().unwrap() {
+        assert_eq!(
+            fs::read_to_string(root.join(name)).unwrap(),
+            source.as_str().unwrap()
+        );
+    }
+    let before = root
+        .join("install.py")
+        .metadata()
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(prepare(cache.path(), &bundle).unwrap(), root);
+    assert_eq!(
+        root.join("install.py")
+            .metadata()
+            .unwrap()
+            .modified()
+            .unwrap(),
+        before
+    );
+    // An installer update keeps renderer revision 1 and needs no app rebuild.
+    bundle["files"]["install.py"] = json!(format!(
+        "{}\n# installer update\n",
+        bundle["files"]["install.py"].as_str().unwrap()
+    ));
+    let updated = prepare(cache.path(), &bundle).unwrap();
+    assert_ne!(updated, root);
+    assert!(
+        fs::read_to_string(updated.join("install.py"))
+            .unwrap()
+            .ends_with("# installer update\n")
+    );
+    let mut metadata: Value =
+        serde_json::from_str(bundle["files"]["release.json"].as_str().unwrap()).unwrap();
+    metadata["renderer_revision"] = json!(2);
+    bundle["files"]["release.json"] = json!(metadata.to_string());
+    assert_ne!(prepare(cache.path(), &bundle).unwrap(), updated);
+}
+
+#[test]
+fn engine_download_rejects_foreign_incomplete_or_corrupted_assets() {
+    let cache = tempfile::tempdir().unwrap();
+    let bytes = serde_json::to_vec(&bundle()).unwrap();
+    let good = release(&bytes);
+    for (key, value) in [
+        (
+            "browser_download_url",
+            json!("https://github.com/other/engine/releases/download/v1/engine.json"),
+        ),
+        ("size", json!(bytes.len() + 1)),
+        ("digest", json!(format!("sha256:{}", "0".repeat(64)))),
+        ("digest", Value::Null),
+        ("size", json!(3 * 1024 * 1024)),
+    ] {
+        let mut release = good.clone();
+        release["assets"][0][key] = value;
+        assert!(
+            engine::prepare_from_release(
+                cache.path(),
+                &serde_json::to_vec(&release).unwrap(),
+                |_| Ok(bytes.clone())
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(fs::read_dir(cache.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn incompatible_or_unsafe_engine_bundles_never_escape_the_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join("cache");
+    let good = bundle();
+    let mut variants = Vec::new();
+    for (key, value) in [("abi", json!(2)), ("format", json!(2))] {
+        let mut bad = good.clone();
+        bad[key] = value;
+        variants.push(bad);
+    }
+    for name in [
+        "../escape",
+        "/tmp/escape",
+        "sub/../../escape",
+        "sub//escape",
+        "sub\\escape",
+        "",
+    ] {
+        let mut bad = good.clone();
+        bad["files"][name] = json!("untrusted source");
+        variants.push(bad);
+    }
+    for metadata in [
+        json!({"abi":2,"renderer_revision":1}),
+        json!({"abi":1,"renderer_revision":0}),
+    ] {
+        let mut bad = good.clone();
+        bad["files"]["release.json"] = json!(metadata.to_string());
+        variants.push(bad);
+    }
+    let mut missing = good.clone();
+    missing["files"]
+        .as_object_mut()
+        .unwrap()
+        .remove("recovery.py");
+    variants.push(missing);
+    for bad in variants {
+        assert!(prepare(&cache, &bad).is_err());
+    }
+    assert!(!cache.exists());
+    assert!(!temp.path().join("escape").exists());
+}
+
+#[test]
+fn engine_cache_preserves_symlinks_and_their_targets() {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::tempdir().unwrap();
+    let bundle = bundle();
+    let cache = temp.path().join("cache");
+    let root = prepare(&cache, &bundle).unwrap();
+    let outside = temp.path().join("outside");
+    fs::write(&outside, "preserved").unwrap();
+    fs::remove_file(root.join("install.py")).unwrap();
+    symlink(&outside, root.join("install.py")).unwrap();
+    assert!(prepare(&cache, &bundle).is_err());
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "preserved");
+    fs::remove_dir_all(&root).unwrap();
+    symlink(temp.path(), &root).unwrap();
+    assert!(prepare(&cache, &bundle).is_err());
+    assert!(root.is_symlink());
+}
+
+#[test]
+fn offline_recovery_restores_original_compositor_without_the_source_checkout() {
     if std::env::var_os("FORGE_TEST_RESTORE_CHILD").is_some() {
         let mut stages = Vec::new();
         let result = cosmic_forge::engine::setup(true, |stage| stages.push(stage));
@@ -67,7 +246,7 @@ fn bundled_setup_restores_original_compositor_without_the_source_checkout() {
     let result = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "bundled_setup_restores_original_compositor_without_the_source_checkout",
+            "offline_recovery_restores_original_compositor_without_the_source_checkout",
             "--nocapture",
         ])
         .env("FORGE_TEST_RESTORE_CHILD", "1")

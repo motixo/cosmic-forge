@@ -67,7 +67,7 @@ def main():
             assert ImageChops.difference(first.crop((344, 800, 984, 855)),
                                         second.crop((344, 800, 984, 855))).getbbox(), 'Progress bar did not animate'
             log = state / 'engine-build.log'
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + 100
             while time.monotonic() < deadline:
                 if log.exists() and 'FORGE_PROGRESS:already_installed' in log.read_text():
                     break

@@ -1,6 +1,6 @@
 # Glass effect packs
 
-Users can open the settings gear in the header, choose **Import glass effect…**,
+Users can open the settings gear in the header, choose **Import effect**,
 and select a local JSON pack, or select a `.frag` shader and its JSON settings
 together (Ctrl+click to select both files). The effect appears immediately in the sidebar.
 The same operation is available without opening the GUI:
@@ -120,7 +120,8 @@ update Crystal/Aero source and add glass effects while leaving community packs a
 A missing repository, a repository with no stable release, or a release without
 that asset is reported as “No glass effect pack published yet”. The separate shader repository is the former `cosmic-crystal`, renamed with its
 history and legacy v0.8.0 release preserved. Its main branch contains only effect
-data, GLSL, examples and pack tooling; compositor setup remains in Forge.
+data, GLSL, examples and pack tooling; compositor setup lives in the separate
+[engine repository](https://github.com/motixo/cosmic-forge-engine).
 The app connects it as the `shaders/` Git submodule, pinned to a tested commit.
 Run `git submodule update --init --recursive` after cloning the app. Installed apps
 fetch release assets without Git. A `glass-v<N>` tag in the shader repository
@@ -131,18 +132,26 @@ runs its checks and publishes revision N independently of app releases.
 Existing installed Crystal/Aero binaries render only the built-in effects. New
 source and custom parameters require the Forge renderer ABI 1 in `engine/` once.
 On Arch Linux and derivatives with matching COSMIC 1.10.0 or 1.11.0 packages, open
-the gear page and choose **Install / update compositor**. Forge carries the
-pinned patches and builder inside its executable; the source checkout does not
-need to stay at a particular path. The first build downloads pinned upstream
+the gear page and choose **Install / update compositor**. Forge downloads the
+latest stable `cosmic-forge-engine.json` release from **motixo/cosmic-forge-engine**.
+The app checks the repository URL, asset size, GitHub SHA-256 digest, bundle paths
+and ABI before using its installer. Engine fixes and compatible renderer revisions
+can be published independently of app releases. The source checkout is not needed
+at runtime. The first build downloads pinned upstream
 source and Cargo dependencies and requires Python 3, Rust, Git and the compositor
 build libraries. Build progress is logged to
 `$XDG_STATE_HOME/cosmic-forge/engine-build.log`. The operation runs in the background
 and never stops the current session. A native progress bar shows the current stage
-(checking, preparing source, compiling, installing or restoring). Download/compile
+(downloading the engine package, checking, preparing source, compiling, installing or restoring). Download/compile
 phases use an animated bar because their duration is not known; completion fills
-the bar. Before downloading or compiling, Forge checks the renderer revision,
+the bar. After downloading the small engine package and before fetching upstream
+source or compiling, Forge checks the renderer revision,
 exact COSMIC package versions, launcher ownership and binary checksum. A matching
 installation finishes immediately without rebuilding or rewriting its files.
+
+A missing, incompatible or damaged engine release leaves the installed renderer
+unchanged. Restore uses an embedded recovery helper and needs no internet. Both
+engine and shader repositories are pinned as Git submodules for development.
 
 It installs a user-level, package-guarded
 compositor launcher, keeping the old launcher available for recovery. The Settings
