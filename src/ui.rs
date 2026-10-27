@@ -9,7 +9,7 @@ use cosmic::{
 use cosmic_forge::{
     APP_ID, VERSION,
     catalog::{self, Control, ControlKind, Effect},
-    engine, mods, packs, panel,
+    engine, lockscreen, mods, packs, panel,
     store::{self, Fingerprint, Store, xdg},
 };
 use serde_json::{Value, json};
@@ -27,8 +27,7 @@ impl CosmicFlags for Flags {
 #[derive(Clone, Copy, Debug)]
 enum Page {
     Effect(usize),
-    Panel(usize),
-    LockScreen,
+    Mod(usize),
     Settings,
 }
 #[derive(Clone, Debug)]
@@ -43,7 +42,10 @@ pub enum Message {
     ModValue(usize, Value),
     ModPreset,
     Engine(engine::Component, engine::Action),
-    LockScreen,
+    LockScreen(nav_bar::Id),
+    ChooseLockImage,
+    LockImageImported(Option<Result<std::path::PathBuf, String>>),
+    FollowDesktop,
     Settings,
     ApplyEffect,
     Reset,
@@ -92,6 +94,9 @@ pub struct Forge {
     engine_component: engine::Component,
     panel_note: String,
     panel_revision: u64,
+    greeter_revision: u64,
+    greeter_note: String,
+    importing_image: bool,
     mods: Vec<mods::Mod>,
     show_updates: bool,
     panel_names: Vec<String>,
@@ -180,7 +185,11 @@ impl Forge {
         });
     }
     fn transfer_note(&mut self, note: String) {
-        if self.engine_progress.is_some() && self.engine_component == engine::Component::Panel {
+        if self.engine_progress.is_some() && self.engine_component == engine::Component::Greeter {
+            self.greeter_note = note;
+        } else if self.engine_progress.is_some()
+            && self.engine_component == engine::Component::Panel
+        {
             self.panel_note = note;
         } else if self.engine_progress.is_some() {
             self.renderer_note = note;
@@ -291,8 +300,18 @@ impl Forge {
         };
         match page {
             Page::Effect(index) => self.nav.activate_position(index as u16),
-            Page::Panel(index) => self.panel_nav.activate_position(index as u16),
-            Page::LockScreen => self.lock_nav.activate_position(0),
+            Page::Mod(index) => {
+                let section = &self.mods[index].section;
+                let position = self.mods[..index]
+                    .iter()
+                    .filter(|m| m.section == *section)
+                    .count();
+                if section == "panel" {
+                    self.panel_nav.activate_position(position as u16)
+                } else {
+                    self.lock_nav.activate_position(position as u16)
+                }
+            }
             Page::Settings => false,
         };
     }
@@ -356,11 +375,11 @@ impl Forge {
             return;
         }
         let remap = |page: Page| match page {
-            Page::Panel(index) => self
+            Page::Mod(index) => self
                 .mods
                 .get(index)
                 .and_then(|m| catalog.mods.iter().position(|new| new.id == m.id))
-                .map(Page::Panel)
+                .map(Page::Mod)
                 .unwrap_or(Page::Effect(0)),
             page => page,
         };
@@ -368,22 +387,37 @@ impl Forge {
         self.settings_return = remap(self.settings_return);
         self.mods = catalog.mods;
         self.panel_nav = nav_bar::Model::default();
+        self.lock_nav = nav_bar::Model::default();
         for (index, m) in self.mods.iter().enumerate() {
-            self.panel_nav
-                .insert()
-                .text(m.name.clone())
-                .data(Page::Panel(index));
+            let model = if m.section == "panel" {
+                &mut self.panel_nav
+            } else {
+                &mut self.lock_nav
+            };
+            model.insert().text(m.name.clone()).data(Page::Mod(index));
         }
         self.sync_selection();
     }
     fn set_mod_values(&mut self, values: BTreeMap<String, Value>) {
-        if let Page::Panel(index) = self.page
+        if let Page::Mod(index) = self.page
             && let Some(m) = self.mods.get(index)
-            && self.panel_revision >= m.engine_revision
-            && let Some(profile) = self.panel_names.get(self.panel_index)
         {
-            let result = panel::apply_controls(&mut self.store, profile, &m.controls, &values);
-            if self.report(result) {
+            let result = if m.section == "panel" && self.panel_revision >= m.engine_revision {
+                self.panel_names.get(self.panel_index).map(|profile| {
+                    panel::apply_controls(&mut self.store, profile, &m.controls, &values)
+                })
+            } else if m.section == "lock_screen" && self.greeter_revision >= m.engine_revision {
+                Some(lockscreen::apply_controls(
+                    &mut self.store,
+                    &m.controls,
+                    &values,
+                ))
+            } else {
+                None
+            };
+            if let Some(result) = result
+                && self.report(result)
+            {
                 self.reload_panel(false);
             }
         }
@@ -395,6 +429,12 @@ impl Forge {
                 "Build compositor",
                 "Restore original COSMIC compositor",
                 self.renderer_note.as_str(),
+            ),
+            engine::Component::Greeter => (
+                "Install lock screen",
+                "Build lock screen",
+                "Restore original COSMIC lock screen",
+                self.greeter_note.as_str(),
             ),
             engine::Component::Panel => (
                 "Install panel",
@@ -433,10 +473,10 @@ impl Forge {
             if progress.finished() {
                 bar = bar.progress(1.0);
             }
-            let label = if component == engine::Component::Panel {
-                progress.panel_label()
-            } else {
-                progress.label()
+            let label = match component {
+                engine::Component::Panel => progress.panel_label(),
+                engine::Component::Greeter => progress.greeter_label(),
+                engine::Component::Compositor => progress.label(),
             };
             content = content.push(
                 widget::column::with_capacity(2)
@@ -475,6 +515,7 @@ impl Forge {
         };
         for (i, c) in m.controls.iter().enumerate() {
             match c.kind {
+                mods::Kind::Image => {}
                 mods::Kind::ThemeColor => {
                     let customized = profile
                         .colors
@@ -559,13 +600,87 @@ impl Forge {
         }
         content.into()
     }
-    fn mods_view(&self, title: &str, note: &str) -> Element<'_, Message> {
-        widget::column::with_capacity(3)
+    fn lockscreen_view(&self, index: usize) -> Element<'_, Message> {
+        let m = &self.mods[index];
+        let mut content = widget::column::with_capacity(8)
             .spacing(18)
-            .push(text::title2(title.to_owned()))
-            .push(text::body(note.to_owned()))
-            .push(text::body("No mods are available in this section yet."))
-            .into()
+            .push(text::title2(m.name.as_str()))
+            .push(text::body(m.description.as_str()));
+        if self.greeter_revision < m.engine_revision {
+            return content
+                .push(text::body("Install or update the lock screen engine in Settings, then sign out and back in to use this mod."))
+                .push(button::suggested("Go to settings").on_press(Message::EngineSettings)).into();
+        }
+        let config = match lockscreen::load(&self.store) {
+            Ok(config) => config,
+            Err(error) => return content.push(text::body(format!("{error:#}"))).into(),
+        };
+        for (index, c) in m.controls.iter().enumerate() {
+            match c.kind {
+                mods::Kind::Image => {
+                    content = content.push(text::body(if config.wallpaper.is_some() {
+                        "Using a separate lock screen image"
+                    } else {
+                        "Using desktop wallpaper"
+                    }));
+                    let mut choose = button::suggested("Choose image");
+                    let mut follow = button::standard("Use desktop wallpaper");
+                    if !self.importing_image {
+                        choose = choose.on_press(Message::ChooseLockImage);
+                        if config.wallpaper.is_some() {
+                            follow = follow.on_press(Message::FollowDesktop);
+                        }
+                    }
+                    content = content.push(
+                        widget::row::with_capacity(2)
+                            .spacing(12)
+                            .push(choose)
+                            .push(follow),
+                    );
+                    if self.importing_image {
+                        content = content.push(text::caption("Importing image…"));
+                    }
+                }
+                mods::Kind::Boolean => {
+                    let value = lockscreen::control_value(&self.store, c)
+                        .ok()
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    content = content.push(
+                        settings::item::builder(c.label.as_str())
+                            .description(c.description.as_str())
+                            .control(
+                                widget::toggler(value)
+                                    .on_toggle(move |v| Message::ModValue(index, json!(v))),
+                            ),
+                    );
+                }
+                mods::Kind::Integer => {
+                    let value = lockscreen::control_value(&self.store, c)
+                        .ok()
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(i64::from(c.min)) as i32;
+                    content = content.push(
+                        settings::item::builder(c.label.as_str())
+                            .description(c.description.as_str())
+                            .control(widget::spin_button(
+                                format!("{value}{}", c.unit),
+                                c.label.clone(),
+                                value,
+                                1,
+                                c.min,
+                                c.max,
+                                move |v| Message::ModValue(index, json!(v)),
+                            )),
+                    );
+                }
+                mods::Kind::ThemeColor => {}
+            }
+        }
+        if !m.preset.is_empty() {
+            content = content.push(button::standard("Apply preset").on_press(Message::ModPreset));
+        }
+        content.into()
     }
     fn effect_view(&self, index: usize) -> Element<'_, Message> {
         let effect = &self.effects[index];
@@ -669,11 +784,12 @@ impl Forge {
             .push(effects)
             .push(
                 settings::section().title("Engine").add(
-                    widget::column::with_capacity(3)
+                    widget::column::with_capacity(4)
                         .spacing(24)
                         .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install prebuilt binaries or build from source, then sign out and back in."))
                         .push(self.engine_component_view(engine::Component::Compositor))
-                        .push(self.engine_component_view(engine::Component::Panel)),
+                        .push(self.engine_component_view(engine::Component::Panel))
+                        .push(self.engine_component_view(engine::Component::Greeter)),
                 ),
             )
             .into()
@@ -723,8 +839,7 @@ impl cosmic::Application for Forge {
         nav.activate_position(index as u16);
         let panel_nav = nav_bar::Model::default();
 
-        let mut lock_nav = nav_bar::Model::default();
-        lock_nav.insert().text("Lock screen mods");
+        let lock_nav = nav_bar::Model::default();
         let (status, engine_note) = store::engine_status();
         let mut app = Self {
             core,
@@ -752,6 +867,9 @@ impl cosmic::Application for Forge {
             engine_component: engine::Component::Compositor,
             panel_note: String::new(),
             panel_revision: panel::installed_revision().unwrap_or(0),
+            greeter_revision: engine::installed_revision(engine::Component::Greeter).unwrap_or(0),
+            greeter_note: String::new(),
+            importing_image: false,
             mods: Vec::new(),
             show_updates: false,
             panel_names: Vec::new(),
@@ -806,8 +924,8 @@ impl cosmic::Application for Forge {
             .push(group("Panel & Dock", &self.panel_nav, |id| {
                 cosmic::Action::App(Message::Panel(id))
             }))
-            .push(group("Lock screen", &self.lock_nav, |_| {
-                cosmic::Action::App(Message::LockScreen)
+            .push(group("Lock screen", &self.lock_nav, |id| {
+                cosmic::Action::App(Message::LockScreen(id))
             }));
         let mut sidebar = widget::container(widget::scrollable(groups).height(Length::Fill))
             .padding(8)
@@ -855,8 +973,8 @@ impl cosmic::Application for Forge {
     fn view(&self) -> Element<'_, Message> {
         let content = match self.page {
             Page::Effect(i) => self.effect_view(i),
-            Page::Panel(index) => self.panel_view(index),
-            Page::LockScreen => self.mods_view("Lock screen", "Mods for your COSMIC lock screen."),
+            Page::Mod(index) if self.mods[index].section == "panel" => self.panel_view(index),
+            Page::Mod(index) => self.lockscreen_view(index),
             Page::Settings => self.settings_view(),
         };
         widget::scrollable(
@@ -1056,6 +1174,8 @@ impl cosmic::Application for Forge {
                             }
                             self.transfer_note(note);
                             self.panel_revision = panel::installed_revision().unwrap_or(0);
+                            self.greeter_revision =
+                                engine::installed_revision(engine::Component::Greeter).unwrap_or(0);
                             self.reload_panel(true);
                             self.reload_mods();
                             (self.status, self.engine_note) = store::engine_status();
@@ -1134,10 +1254,71 @@ impl cosmic::Application for Forge {
                     self.sync_selection();
                 }
             }
-            Message::LockScreen => {
-                if self.flush() {
-                    self.page = Page::LockScreen;
+            Message::LockScreen(id) => {
+                if self.flush()
+                    && let Some(page) = self.lock_nav.data::<Page>(id).copied()
+                {
+                    self.page = page;
                     self.sync_selection();
+                }
+            }
+            Message::ChooseLockImage => {
+                if self.greeter_revision > 0 && !self.importing_image {
+                    self.importing_image = true;
+                    return cosmic::task::future(async {
+                        use cosmic::dialog::file_chooser;
+                        let files = file_chooser::open::Dialog::new()
+                            .title("Choose lock screen background")
+                            .filter(
+                                file_chooser::FileFilter::new("Images")
+                                    .glob("*.png")
+                                    .glob("*.jpg")
+                                    .glob("*.jpeg")
+                                    .glob("*.webp"),
+                            )
+                            .open_file()
+                            .await;
+                        let source = match files {
+                            Ok(files) => files.url().to_file_path().ok(),
+                            Err(file_chooser::Error::Cancelled) => {
+                                return Message::LockImageImported(None);
+                            }
+                            Err(e) => return Message::LockImageImported(Some(Err(e.to_string()))),
+                        };
+                        let Some(source) = source else {
+                            return Message::LockImageImported(Some(Err(
+                                "Choose a local image".into()
+                            )));
+                        };
+                        let (tx, rx) = cosmic::iced::futures::channel::oneshot::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(
+                                lockscreen::import_image(&source).map_err(|e| format!("{e:#}")),
+                            );
+                        });
+                        Message::LockImageImported(Some(
+                            rx.await.unwrap_or_else(|e| Err(e.to_string())),
+                        ))
+                    });
+                }
+            }
+            Message::LockImageImported(result) => {
+                self.importing_image = false;
+                if let Some(result) = result {
+                    let result = result.map_err(anyhow::Error::msg).and_then(|path| {
+                        anyhow::ensure!(
+                            self.greeter_revision > 0,
+                            "Install the lock screen engine in Settings first"
+                        );
+                        lockscreen::set_wallpaper(&mut self.store, Some(path))
+                    });
+                    self.report(result);
+                }
+            }
+            Message::FollowDesktop => {
+                if self.greeter_revision > 0 && !self.importing_image {
+                    let result = lockscreen::set_wallpaper(&mut self.store, None);
+                    self.report(result);
                 }
             }
             Message::PanelProfile(index) => {
@@ -1166,14 +1347,14 @@ impl cosmic::Application for Forge {
             }
             Message::MatchPanelTheme => self.save_panel_color(None),
             Message::ModValue(index, value) => {
-                if let Page::Panel(m) = self.page
+                if let Page::Mod(m) = self.page
                     && let Some(c) = self.mods[m].controls.get(index)
                 {
                     self.set_mod_values(BTreeMap::from([(c.key.clone(), value)]));
                 }
             }
             Message::ModPreset => {
-                if let Page::Panel(m) = self.page {
+                if let Page::Mod(m) = self.page {
                     self.set_mod_values(self.mods[m].preset.clone());
                 }
             }

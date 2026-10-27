@@ -38,6 +38,7 @@ pub enum Kind {
     Boolean,
     Integer,
     ThemeColor,
+    Image,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,7 +64,7 @@ impl Control {
             Kind::Integer => value
                 .as_i64()
                 .is_some_and(|v| v >= i64::from(self.min) && v <= i64::from(self.max)),
-            Kind::ThemeColor => false,
+            Kind::ThemeColor | Kind::Image => false,
         }
     }
 }
@@ -82,7 +83,7 @@ pub fn parse(bytes: &[u8]) -> Result<Catalog> {
         ensure!(
             valid_identifier(&m.id)
                 && ids.insert(&m.id)
-                && m.section == "panel"
+                && matches!(m.section.as_str(), "panel" | "lock_screen")
                 && !m.name.is_empty()
                 && m.name.len() <= 100
                 && m.description.len() <= 2000
@@ -102,14 +103,18 @@ pub fn parse(bytes: &[u8]) -> Result<Catalog> {
                     && c.unit.len() <= 16,
                 "Invalid mod control"
             );
-            let (kind, range) = match c.key.as_str() {
-                "penumbra_enabled" => (Kind::Boolean, None),
-                "gradient_height" => (Kind::Integer, Some((16, 512))),
-                "panel_opacity" | "maximized_opacity" => (Kind::Integer, Some((0, 100))),
-                "forge_colors" => (Kind::ThemeColor, None),
-                key => {
+            let (kind, range) = match (m.section.as_str(), c.key.as_str()) {
+                ("lock_screen", "wallpaper") => (Kind::Image, None),
+                ("lock_screen", "media_enabled") => (Kind::Boolean, None),
+                ("panel", "penumbra_enabled") => (Kind::Boolean, None),
+                ("panel", "gradient_height") => (Kind::Integer, Some((16, 512))),
+                ("panel", "panel_opacity" | "maximized_opacity") => (Kind::Integer, Some((0, 100))),
+                ("panel", "forge_colors") => (Kind::ThemeColor, None),
+                (_, key) => {
                     ensure!(
-                        key.starts_with("forge_") && key.len() <= 100 && c.kind != Kind::ThemeColor,
+                        key.starts_with("forge_")
+                            && key.len() <= 100
+                            && !matches!(c.kind, Kind::ThemeColor | Kind::Image),
                         "Unsupported mod setting"
                     );
                     (c.kind, Some((-100000, 100000)))
@@ -144,7 +149,15 @@ pub fn root() -> PathBuf {
 }
 pub fn load(directory: &Path) -> Result<Catalog> {
     match fs::read(directory.join(ASSET)) {
-        Ok(bytes) => parse(&bytes),
+        Ok(bytes) => {
+            let cached = parse(&bytes)?;
+            let builtin = parse(include_bytes!("../mods/catalog.json"))?;
+            Ok(if cached.revision < builtin.revision {
+                builtin
+            } else {
+                cached
+            })
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             parse(include_bytes!("../mods/catalog.json"))
         }

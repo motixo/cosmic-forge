@@ -988,12 +988,13 @@ dependencies = [
 
 [[package]]
 name = "cosmic-forge"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cosmic-config 1.0.0 (git+https://github.com/pop-os/libcosmic?rev=5a8bd9482a35ae94c1e54edf77b331c6b970f170)",
  "cosmic-theme",
+ "image",
  "libcosmic",
  "ron 0.12.2",
  "serde",
@@ -2630,6 +2631,7 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png 0.18.1",

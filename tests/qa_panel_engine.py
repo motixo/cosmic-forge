@@ -25,18 +25,18 @@ try:
         raise AssertionError(log.read_text() if log.exists() else 'No panel worker log')
     s.click(100,322)
     # Go to Settings through the header, independent of the missing-engine message.
-    s.click(856,24);s.scroll_to_bottom();s.click(400,657);wait_for('complete')
+    s.click(856,24);s.scroll_to_top();s.click(400,657);wait_for('complete')
     data=json.loads(record.read_text());binary=Path(data['destination'])/'cosmic-panel'
     assert 'FORGE_PROGRESS:downloading_binary' in log.read_text()
     assert prefs=={p:p.read_bytes() for p in s.config.rglob('*') if p.is_file()}
     before={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in [record,launcher,binary]}
     s.capture('panel-installed');log.unlink()
-    s.scroll_to_bottom();s.click(540,657);wait_for('already_installed')
+    s.scroll_to_top();s.click(540,657);wait_for('already_installed')
     assert 'FORGE_PROGRESS:building' not in log.read_text()
     assert before=={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before}
     s.capture('matching-panel-skipped')
     # Stock recovery is embedded and does not fetch engine sources.
-    log.unlink();s.scroll_to_bottom();s.click(450,705);wait_for('complete')
+    log.unlink();s.scroll_to_top();s.click(450,705);wait_for('complete')
     assert not launcher.exists() and not record.exists()
     assert 'Original COSMIC panel restored' in log.read_text()
     assert binary.read_bytes()==before[binary][0]

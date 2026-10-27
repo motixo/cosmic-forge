@@ -26,8 +26,8 @@ fn new_mod_controls_and_presets_load_without_app_changes() {
     let bytes = serde_json::to_vec(&c).unwrap();
     mods::update_from_release(temp.path(), &release(&bytes), |_| Ok(bytes.clone())).unwrap();
     let catalog = mods::load(temp.path()).unwrap();
-    assert_eq!(catalog.mods.len(), 3);
-    let m = &catalog.mods[2];
+    assert_eq!(catalog.mods.len(), 5);
+    let m = &catalog.mods[4];
     let mut store = Store::new(temp.path().join("config"), temp.path().join("state"));
     panel::apply_controls(&mut store, "Panel", &m.controls, &m.preset).unwrap();
     assert_eq!(

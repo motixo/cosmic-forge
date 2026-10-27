@@ -1,11 +1,12 @@
 # COSMIC Forge
 
 A native mod manager for the **COSMIC desktop**. Currently supports glass shader
-effects, Penumbra and theme-aware panel colors.
+effects, Penumbra, theme-aware panel colors, and separate lock screen backgrounds
+and a media player widget.
 The sidebar groups Shaders, Panel & Dock and Lock screen.
 
 Adjust effects, import JSON + `.frag` files and manage the glass compositor from
-Settings. Independent repositories maintain the
+Settings. Lock screen mods use a separate, optional locker engine. Independent repositories maintain the
 [shaders](https://github.com/motixo/cosmic-forge-shaders) and
 [engine](https://github.com/motixo/cosmic-forge-engine).
 The [mod catalog](https://github.com/motixo/cosmic-forge-mods) updates the list,
@@ -28,6 +29,9 @@ cosmic-forge
 Supports Arch Linux, Fedora, Ubuntu and Pop!_OS with tested COSMIC releases from
 1.10 onward (currently 1.10/1.11). In Settings, **Install compositor** downloads a
 verified prebuilt binary; **Build compositor** builds pinned source. Prebuilt
-binaries support x86_64/ARM64 with glibc 2.35+. Sign out and back in to activate.
+compositor/panel binaries support x86_64/ARM64 with glibc 2.35+; lock screen binaries
+require glibc 2.39+ (Ubuntu/Pop!_OS 24.04+, current Arch/Fedora). Lock screen Settings
+includes Install, Build and Restore; system Settings and login greeter are preserved.
+Sign out and back in after engine installation.
 
 [Adding effects](docs/adding-effects.md) · GPL-3.0-only

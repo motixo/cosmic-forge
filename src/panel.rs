@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
-use crate::store::{Changes, Store, xdg};
+use crate::store::{Changes, Store};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::ErrorKind,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -194,70 +191,7 @@ pub fn theme_color(store: &Store, dark: bool) -> [f32; 3] {
     [color.red, color.green, color.blue]
 }
 pub fn installed_revision() -> Option<u64> {
-    let check = || -> Option<u64> {
-        let data = xdg("XDG_DATA_HOME", ".local/share").join("cosmic-forge/panel/versions");
-        let launcher = PathBuf::from(std::env::var_os("HOME")?).join(".local/bin/cosmic-panel");
-        let record: serde_json::Value = serde_json::from_slice(
-            &fs::read(
-                xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge/panel-installation.json"),
-            )
-            .ok()?,
-        )
-        .ok()?;
-        if record["abi"] != 1
-            || record["revision"].as_u64()? < 1
-            || record["launcher"].as_str()? != launcher.to_str()?
-            || launcher.is_symlink()
-        {
-            return None;
-        }
-        let destination = PathBuf::from(record["destination"].as_str()?);
-        if destination.parent()? != data || destination.file_name()?.len() != 16 {
-            return None;
-        }
-        let binary = destination.join("cosmic-panel");
-        if destination.is_symlink()
-            || binary.is_symlink()
-            || fs::metadata(&binary).ok()?.permissions().mode() & 0o111 == 0
-        {
-            return None;
-        }
-        let manager = record["package_manager"].as_str()?;
-        let args: &[&str] = match manager {
-            "pacman" => &["-Q", "cosmic-panel"],
-            "rpm" => &[
-                "-q",
-                "--qf",
-                "%{NAME} %{EPOCHNUM}:%{VERSION}-%{RELEASE}",
-                "cosmic-panel",
-            ],
-            "dpkg-query" => &[
-                "-W",
-                "-f=${Package} ${Version} ${db:Status-Status}",
-                "cosmic-panel",
-            ],
-            _ => return None,
-        };
-        let output = Command::new(manager).args(args).output().ok()?;
-        if !output.status.success()
-            || String::from_utf8(output.stdout).ok()?.trim()
-                != record["packages"]["cosmic-panel"].as_str()?
-        {
-            return None;
-        }
-        let hash = |p: &Path| {
-            fs::read(p).ok().map(|b| {
-                Sha256::digest(b)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            })
-        };
-        (hash(&launcher)?.as_str() == record["launcher_sha256"].as_str()?
-            && hash(&binary)?.as_str() == record["binary_sha256"].as_str()?)
-        .then_some(record["revision"].as_u64()?)
-    };
-    check()
+    crate::engine::installed_revision(crate::engine::Component::Panel)
 }
 
 pub fn control_value(
@@ -301,7 +235,7 @@ pub fn control_value(
                 number.clamp(i64::from(control.min), i64::from(control.max))
             ));
         }
-        crate::mods::Kind::ThemeColor => {}
+        crate::mods::Kind::ThemeColor | crate::mods::Kind::Image => {}
     }
     Ok(value)
 }

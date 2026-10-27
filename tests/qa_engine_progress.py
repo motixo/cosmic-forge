@@ -63,9 +63,9 @@ def main():
             paths = [record_path, Path(record['launcher']), Path(record['destination']) / 'cosmic-comp']
             before = {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns) for p in paths}
             session.click(856, 24)
-            session.scroll_to_bottom()
+            session.scroll_to_top()
             session.click(450, 514, wait=0.35)
-            session.scroll_to_bottom()
+            session.scroll_to_top()
             first = session.capture('progress-active')
             first.save(artifacts / 'progress-active.png')
             time.sleep(0.45)
@@ -86,7 +86,7 @@ def main():
             text = log.read_text()
             assert 'FORGE_PROGRESS:building' not in text and 'FORGE_PROGRESS:installing' not in text
             log.unlink()
-            session.scroll_to_bottom()
+            session.scroll_to_top()
             session.click(600, 514)
             deadline = time.monotonic() + 100
             while time.monotonic() < deadline:
@@ -106,7 +106,7 @@ def main():
                 if legacy_only:
                     launcher.write_bytes(legacy)
                     launcher.chmod(0o755)
-                session.scroll_to_bottom()
+                session.scroll_to_top()
                 session.click(450, 562)
                 deadline = time.monotonic() + 10
                 while launcher.exists() and time.monotonic() < deadline:

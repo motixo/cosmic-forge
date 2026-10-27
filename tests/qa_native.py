@@ -17,16 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class Session:
 
-    def __init__(self, binary, path=None, with_engine=True, with_panel=False):
+    def __init__(self, binary, path=None, with_engine=True, with_panel=False, with_greeter=False):
         self.app = self.xvfb = self.log = None
         self.display = None
         try:
-            self.start(binary, path, with_engine, with_panel)
+            self.start(binary, path, with_engine, with_panel, with_greeter)
         except BaseException:
             self.close()
             raise
 
-    def start(self, binary, path=None, with_engine=True, with_panel=False):
+    def start(self, binary, path=None, with_engine=True, with_panel=False, with_greeter=False):
         self.path = path or ROOT / 'build/qa-forge-native'
         self.path.mkdir(parents=True, exist_ok=True)
         (self.path / 'screenshots').mkdir(exist_ok=True)
@@ -96,6 +96,28 @@ class Session:
                 'launcher_sha256': hashlib.sha256(launcher.read_bytes()).hexdigest(),
                 'binary_sha256': hashlib.sha256(binary_fixture.read_bytes()).hexdigest(),
                 'package_manager': manager, 'packages': {'cosmic-panel': package},
+            }))
+        if with_greeter:
+            import sys
+            sys.path.insert(0, str(ROOT / 'engine'))
+            from platforms import package_manager, package_query
+            manager = package_manager()
+            package = subprocess.check_output(package_query(manager, 'cosmic-greeter'), text=True).strip()
+            launcher = home / '.local/bin/cosmic-greeter'
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.write_bytes(b'#!/bin/sh\n# Private UI locker fixture\nexit 0\n')
+            destination = self.path / 'data/cosmic-forge/greeter/versions/0123456789abcdef'
+            destination.mkdir(parents=True)
+            binary_fixture = destination / 'cosmic-greeter'
+            binary_fixture.write_bytes(b'\x7fELFforge-lockscreen-engine-v1 UI fixture')
+            binary_fixture.chmod(0o755)
+            state = self.path / 'state/cosmic-forge'
+            state.mkdir(parents=True, exist_ok=True)
+            (state / 'greeter-installation.json').write_text(json.dumps({
+                'abi': 1, 'revision': 1, 'destination': str(destination), 'launcher': str(launcher),
+                'launcher_sha256': hashlib.sha256(launcher.read_bytes()).hexdigest(),
+                'binary_sha256': hashlib.sha256(binary_fixture.read_bytes()).hexdigest(),
+                'package_manager': manager, 'packages': {'cosmic-greeter': package},
             }))
         self.log = (self.path / 'app.log').open('w')
         self.xvfb = subprocess.Popen(['Xvfb', '-displayfd', '1', '-screen', '0', '1100x1000x24', '-nolisten', 'tcp', '-ac'], stdout=subprocess.PIPE, stderr=self.log, text=True)
@@ -177,6 +199,14 @@ class Session:
 
     def select_effect(self, index):
         self.click(100, 112 + 40 * index)
+
+    def scroll_to_top(self):
+        xtest.fake_input(self.display, X.MotionNotify, x=750, y=650)
+        for _ in range(30):
+            xtest.fake_input(self.display, X.ButtonPress, 4)
+            xtest.fake_input(self.display, X.ButtonRelease, 4)
+        self.display.sync()
+        time.sleep(0.2)
 
     def scroll_to_bottom(self):
         xtest.fake_input(self.display, X.MotionNotify, x=750, y=650)
