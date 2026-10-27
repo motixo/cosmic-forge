@@ -306,9 +306,9 @@ impl Forge {
             install = install.on_press(Message::InstallEngine);
             restore = restore.on_press(Message::RestoreEngine);
         }
-        let mut renderer = settings::section().title("Compositor")
-            .add(text::body("Requires COSMIC 1.10 or 1.11. Install the glass compositor, then sign out and back in. The first build can take several minutes."))
-            .add(install).add(restore);
+        let mut renderer_content = widget::column::with_capacity(4).spacing(16)
+            .push(text::body("Requires COSMIC 1.10 or 1.11. Install the glass compositor, then sign out and back in. The first build can take several minutes."))
+            .push(install).push(restore);
         if let Some(progress) = self.engine_progress {
             let mut bar = widget::progress_bar::linear::Linear::new()
                 .width(Length::Fill)
@@ -316,25 +316,30 @@ impl Forge {
             if progress.finished() {
                 bar = bar.progress(1.0);
             }
-            renderer = renderer.add(
+            renderer_content = renderer_content.push(
                 widget::column::with_capacity(2)
                     .spacing(10)
                     .push(text::body(progress.label()))
                     .push(bar),
             );
         }
-        let effects = settings::section()
-            .title("Effects")
-            .add(text::body(
-                "Import glass effects and keep your shader packs up to date.",
-            ))
-            .add(button::standard("Import glass effect…").on_press(Message::Import))
-            .add(text::caption(
-                "Select a JSON pack, or select both a .frag file and its JSON settings.",
-            ))
-            .add(button::standard("Check for effect updates").on_press(Message::CheckUpdates))
-            .add(text::caption(self.update_note.as_str()))
-            .add(button::standard("Open effects folder").on_press(Message::Folder));
+        let renderer = settings::section()
+            .title("Compositor")
+            .add(renderer_content);
+        let effects = settings::section().title("Effects").add(
+            widget::column::with_capacity(6)
+                .spacing(16)
+                .push(text::body(
+                    "Import glass effects and keep your shader packs up to date.",
+                ))
+                .push(button::standard("Import glass effect…").on_press(Message::Import))
+                .push(text::caption(
+                    "Select a JSON pack, or select both a .frag file and its JSON settings.",
+                ))
+                .push(button::standard("Check for effect updates").on_press(Message::CheckUpdates))
+                .push(text::caption(self.update_note.as_str()))
+                .push(button::standard("Open effects folder").on_press(Message::Folder)),
+        );
         widget::column::with_capacity(5)
             .spacing(24)
             .push(text::title2("Settings"))
@@ -468,6 +473,9 @@ impl cosmic::Application for Forge {
         .into()
     }
     fn footer(&self) -> Option<Element<'_, Message>> {
+        if matches!(self.page, Page::Surfaces) && self.error.is_none() {
+            return None;
+        }
         let runtime_note = (matches!(self.page, Page::Effect(index) if self.effects[index].shader.is_some()) && !packs::engine_active())
             .then_some("This glass pack needs Forge renderer ABI 1. Install the new engine and sign in again.");
         let native =

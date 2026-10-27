@@ -58,14 +58,14 @@ def main():
             before = {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns) for p in paths}
             session.click(856, 24)
             session.scroll_to_bottom()
-            session.click(450, 738, wait=0.35)
+            session.click(450, 783, wait=0.35)
             session.scroll_to_bottom()
             first = session.capture('progress-active')
             first.save(artifacts / 'progress-active.png')
             time.sleep(0.45)
             second = session.capture('progress-animated')
-            assert ImageChops.difference(first.crop((344, 700, 984, 810)),
-                                        second.crop((344, 700, 984, 810))).getbbox(), 'Progress bar did not animate'
+            assert ImageChops.difference(first.crop((344, 800, 984, 855)),
+                                        second.crop((344, 800, 984, 855))).getbbox(), 'Progress bar did not animate'
             log = state / 'engine-build.log'
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
@@ -88,7 +88,7 @@ def main():
                     launcher.write_bytes(legacy)
                     launcher.chmod(0o755)
                 session.scroll_to_bottom()
-                session.click(450, 733)
+                session.click(450, 778)
                 deadline = time.monotonic() + 10
                 while launcher.exists() and time.monotonic() < deadline:
                     time.sleep(0.1)
