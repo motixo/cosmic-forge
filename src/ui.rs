@@ -121,8 +121,8 @@ impl Forge {
         self.updates = Some(receiver);
         std::thread::spawn(move || {
             let effects = match packs::update(&packs::root()) {
-                Ok(note) => format!("Effects: {note}"),
-                Err(e) => format!("Effects: {e:#}"),
+                Ok(note) => format!("effects: {note}"),
+                Err(e) => format!("effects: {e:#}"),
             };
             let (engine, available) = match engine::update_available() {
                 Ok(available) => {

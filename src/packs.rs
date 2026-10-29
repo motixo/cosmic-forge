@@ -297,7 +297,7 @@ pub fn install(data_root: &Path, bytes: &[u8], official: bool) -> Result<String>
         );
         if previous.revision == pack.revision {
             if serde_json::to_vec(&previous)? == serde_json::to_vec(&pack)? {
-                return Ok("Effects are up to date".into());
+                return Ok("effects are up to date".into());
             }
             ensure!(!official, "Official pack revision must increase");
         }
