@@ -1,4 +1,4 @@
-Glass shader manager for COSMIC with live controls, downloadable effects and JSON + `.frag` imports.
+Custom shaders for COSMIC with live controls, downloadable effects and JSON + `.frag` imports.
 
 Install or update for the current user:
 
