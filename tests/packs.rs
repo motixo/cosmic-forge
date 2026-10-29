@@ -291,6 +291,7 @@ fn generic_glass_validates_blur_bounds_and_allows_custom_parameters() {
         id: pack.effects[0].id.clone(),
         base: "glass".into(),
         source: pack.effects[0].shader.as_ref().unwrap().source.clone(),
+        animated: false,
         parameters: vec![],
     };
     assert!(runtime.valid());
@@ -334,6 +335,45 @@ fn a_single_effect_definition_can_supply_json_settings() {
     let installed = packs::parse(&fs::read(root.join("packs/prism.json")).unwrap()).unwrap();
     assert_eq!(installed.revision, 3);
     assert_eq!(installed.effects[0].id, "prism");
+}
+
+#[test]
+fn animated_shaders_import_and_preserve_legacy_static_runtime() {
+    let temp = tempfile::tempdir().unwrap();
+    let files = pair(&temp.path().join("input"));
+    let mut definition: serde_json::Value =
+        serde_json::from_slice(&fs::read(&files[0]).unwrap()).unwrap();
+    definition["effects"][0]["shader"]["animated"] = json!(true);
+    fs::write(&files[0], serde_json::to_vec(&definition).unwrap()).unwrap();
+    let data = temp.path().join("data");
+    packs::import_files(&data, &files).unwrap();
+    let effects = catalog::load(&data.join("effects")).unwrap();
+    let effect = &effects[3];
+    assert_eq!(effect.shader.as_ref().unwrap().renderer_revision(), 3);
+    let mut store = Store::new(temp.path().join("config"), temp.path().join("state"));
+    store.select_effect(effect).unwrap();
+    store.set_control(&effect.controls[0], &json!(72)).unwrap();
+    let encoded = fs::read_to_string(store.comp.join("forge_runtime")).unwrap();
+    let runtime: RuntimeEffect = ron::from_str(&encoded).unwrap();
+    assert!(runtime.animated && runtime.valid());
+    assert_eq!(runtime.parameters[0].value, 72.0);
+    let mut static_effect = effect.clone();
+    static_effect.shader.as_mut().unwrap().animated = false;
+    assert_eq!(
+        static_effect.shader.as_ref().unwrap().renderer_revision(),
+        1
+    );
+    store.select_effect(&static_effect).unwrap();
+    let encoded = fs::read_to_string(store.comp.join("forge_runtime")).unwrap();
+    assert!(!encoded.contains("animated"));
+    assert!(!ron::from_str::<RuntimeEffect>(&encoded).unwrap().animated);
+    assert!(
+        serde_json::to_value(&static_effect).unwrap()["shader"]
+            .get("animated")
+            .is_none()
+    );
+    definition["effects"][0]["shader"]["animated"] = json!("true");
+    assert!(packs::parse(&serde_json::to_vec(&definition).unwrap()).is_err());
 }
 
 #[test]

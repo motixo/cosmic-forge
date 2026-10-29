@@ -128,8 +128,8 @@ Define `forge_my_effect_blur` in `controls` with integer bounds inside 0–100.
 The engine reads this parameter before blurring; its default is 45 if omitted.
 Use a different key for each effect to retain independent values. No Aero or
 Crystal preferences are changed. Opacity remains the existing shared theme value.
-Other custom float uniforms work as before. This base adds no animation, external
-images or extra render passes.
+Other custom float uniforms work as before. Animated shaders use the opt-in
+contract below. External images and extra render passes are not supplied.
 
 | Shader input | Meaning |
 | --- | --- |
@@ -158,6 +158,70 @@ python shaders/scripts/package_effects.py \
   --shader-dir shaders/examples/plain-glass --pack-id plain-glass --revision 1 \
   --output build/plain-glass.json
 ```
+
+## Animated shaders
+
+Forge 0.11+ and renderer revision 3 add animation to every custom shader base.
+Add `"animated": true` inside the effect's `shader` object, alongside `base`,
+`source` and `uniforms`. This works with either a self-contained pack or a
+separate JSON and `.frag` pair:
+
+```json
+"shader": {
+  "base": "glass",
+  "animated": true,
+  "uniforms": { "forge_speed": "forge_my_effect_speed" }
+}
+```
+
+Declare only the engine inputs your fragment shader uses:
+
+```glsl
+uniform float time;
+uniform float delta_time;
+uniform int frame_index;
+uniform vec2 window_position;
+uniform vec2 window_velocity;
+uniform float forge_speed;
+// In main(), after sampling the backdrop and before clipping:
+float phase = time * forge_speed / 100.0;
+color.rgb *= 0.85 + 0.15 * sin(phase);
+```
+
+`time` is monotonic seconds since the compositor's first output frame, shared
+across windows and outputs. `delta_time` is the interval between this output's
+rendered frames, in seconds, capped at 0.25 after a pause. `frame_index` is an
+integer counter for that output and wraps on overflow. All surfaces on the same
+output receive the same values during a frame. These inputs are provided by the
+engine; do not map them in `shader.uniforms` or define controls for them.
+
+`window_position` is the top-left of the effect surface in logical desktop
+coordinates (X right, Y down), including the output's desktop offset. It does
+not include the extra backdrop capture margin. `window_velocity` is its motion
+in logical units per second, sampled once per output frame. Velocity starts at
+zero, returns to zero at rest and resets after a gap longer than 0.25 seconds
+or when a surface first appears on an output. Each surface and output keeps its
+own motion history; closed surfaces are removed from that history. These inputs
+also apply to popups and compositor-owned transparent surfaces.
+
+For position-driven parallax, use `window_position / geo_size` to shift a
+procedural pattern's vanishing point. For a response that settles when dragging
+stops, use a bounded value such as
+`window_velocity / (abs(window_velocity) + vec2(800.0))`.
+
+Animated surfaces request frames at the output's refresh rate while visible.
+Fully covered, minimized or inactive-workspace surfaces do not keep an output
+rendering. Turning off animation or selecting an invalid shader stops continuous
+redraw; invalid GLSL uses the existing static fallback. Time continues while
+hidden, so a restored surface resumes at the current phase. Shader source stays
+compiled while time and parameters change.
+
+Omitting `animated`, or setting it to `false`, keeps the existing static behavior;
+the five animation and motion inputs are zero. Existing static packs remain
+compatible with older engines. New animation formulas only require editing and reimporting the
+shader. The existing single-pass pipeline supplies time, geometry, parameters
+and captured backgrounds; previous-frame buffers, external textures and CPU code
+are separate capabilities.
 
 ## Publishing updates on GitHub
 

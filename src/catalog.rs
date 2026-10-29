@@ -13,13 +13,21 @@ use std::{
 pub struct Shader {
     pub base: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "crate::runtime::is_false")]
+    pub animated: bool,
     #[serde(default)]
     pub uniforms: BTreeMap<String, String>,
 }
 
 impl Shader {
     pub fn renderer_revision(&self) -> u64 {
-        if self.base == "glass" { 2 } else { 1 }
+        if self.animated {
+            3
+        } else if self.base == "glass" {
+            2
+        } else {
+            1
+        }
     }
 }
 
@@ -135,6 +143,7 @@ impl Effect {
                 id: self.id.clone(),
                 base: shader.base.clone(),
                 source: shader.source.clone(),
+                animated: shader.animated,
                 parameters: shader
                     .uniforms
                     .iter()

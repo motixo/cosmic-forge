@@ -286,6 +286,7 @@ impl Store {
             id: effect.id.clone(),
             base: shader.base.clone(),
             source: shader.source.clone(),
+            animated: shader.animated,
             parameters: shader
                 .uniforms
                 .iter()
@@ -557,8 +558,12 @@ mod engine_tests {
         let record_path = state.join("cosmic-forge/engine-installation.json");
         let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
         record["renderer_revision"] = json!(2);
-        fs::write(record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+        fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
         assert_eq!(installed_engine(&state, &launcher, 2), Some(binary.clone()));
+        assert!(installed_engine(&state, &launcher, 3).is_none());
+        record["renderer_revision"] = json!(3);
+        fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(installed_engine(&state, &launcher, 3), Some(binary.clone()));
         fs::write(&launcher, b"another compositor").unwrap();
         assert!(installed_engine(&state, &launcher, 0).is_none());
         fs::write(&launcher, current).unwrap();
