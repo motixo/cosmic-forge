@@ -44,9 +44,15 @@ with tempfile.TemporaryDirectory(prefix='forge-updates-', dir=ROOT / 'build') as
         state = session.path / 'state/cosmic-forge'
         state.mkdir(parents=True, exist_ok=True)
         (state / 'engine-installation.json').write_text('{"test":"installed engine for update check"}')
-        legacy = session.path / 'data/cosmic-forge/mods/custom.json'
-        legacy.parent.mkdir(parents=True)
-        legacy.write_bytes(b'{"existing_mod":"preserve"}')
+        legacy = {
+            session.path / 'data/cosmic-forge/mods/custom.json': b'{"existing_mod":"preserve"}',
+            state / 'panel-installation.json': b'{"legacy":true}',
+            session.config / 'cosmic/com.system76.CosmicPanel.Dock/v1/anchor_gap': b'true\n',
+            session.config / 'cosmic/com.system76.CosmicGreeter/v1/wallpaper': b'"existing wallpaper"\n',
+        }
+        for path, data in legacy.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
         before = {p: p.read_bytes() for p in session.config.rglob('*') if p.is_file()}
         session.click(816, 24)
         target = session.path / 'data/cosmic-forge/packs/cosmic-glass.json'
@@ -61,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='forge-updates-', dir=ROOT / 'build') as
         session.capture('compositor-update-message')
         assert (fixture / 'audit').read_text().splitlines() == ['effects', 'effects', 'engine', 'engine']
         assert json.loads(target.read_text())['revision'] == 99999
-        assert legacy.read_bytes() == b'{"existing_mod":"preserve"}'
+        assert all(path.read_bytes() == data for path, data in legacy.items())
         assert before == {p: p.read_bytes() for p in session.config.rglob('*') if p.is_file()}
         assert not (Path(session.environment['HOME']) / '.local/bin/cosmic-comp').exists()
         assert not (state / 'engine-compositor-receipt.json').exists()
