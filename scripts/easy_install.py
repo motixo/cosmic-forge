@@ -115,7 +115,7 @@ def install(prefix, uninstall=False):
             command.append('--uninstall')
         subprocess.run(command, check=True)
     if not uninstall:
-        print(f'Launch COSMIC Forge from your app menu or run {prefix}/bin/cosmic-forge. Engines are installed separately from Settings.')
+        print(f'Launch COSMIC Forge from your app menu or run {prefix}/bin/cosmic-forge. Install the shader compositor from Settings → Patches.')
 
 
 def main():

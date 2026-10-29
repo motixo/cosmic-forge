@@ -1,8 +1,8 @@
 <p align="center"><img src="resources/icons/io.github.motixo.CosmicForge.svg" width="96" alt="COSMIC Forge icon"></p>
 <h1 align="center">COSMIC Forge</h1>
 
-A native mod manager for the **COSMIC desktop**: glass shaders, Penumbra, panel
-and dock colors, lock screen wallpapers and media controls.
+A glass shader manager for the **COSMIC desktop**. Choose and adjust shaders,
+or import your own effects with JSON settings and `.frag` files.
 
 ## Install
 
@@ -34,9 +34,8 @@ curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh
 ```
 
 Preferences and engine installations are retained. Application installation adds
-only Forge; install optional engines from **Settings → Patches** and sign out and
-back in after engine installation. Prebuilt engine pins currently cover COSMIC
-1.10/1.11; lock screen binaries require glibc 2.39+.
+only Forge; install the shader compositor from **Settings → Patches** and sign out
+and back in to activate it. Prebuilt engine pins currently cover COSMIC 1.10/1.11.
 
 ## Build from source
 
@@ -51,7 +50,7 @@ python3 scripts/install.py
 ```
 
 The header update button refreshes [shaders](https://github.com/motixo/cosmic-forge-shaders)
-and the [mod catalog](https://github.com/motixo/cosmic-forge-mods), and checks for
-[engine](https://github.com/motixo/cosmic-forge-engine) updates independently of app releases.
+and checks for [compositor engine](https://github.com/motixo/cosmic-forge-engine)
+updates independently of app releases.
 
 [Adding effects](docs/adding-effects.md) · GPL-3.0-only

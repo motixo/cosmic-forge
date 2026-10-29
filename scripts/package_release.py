@@ -24,12 +24,12 @@ DESKTOP = f'''[Desktop Entry]
 Type=Application
 Name=COSMIC Forge
 Name[fa]=کازمیک فورج
-Comment=Mod manager for the COSMIC desktop
+Comment=Glass shader manager for the COSMIC desktop
 Exec=cosmic-forge
 Icon={APP_ID}
 Terminal=false
 Categories=Settings;DesktopSettings;
-Keywords=cosmic;mods;glass;panel;wallpaper;
+Keywords=cosmic;shaders;glass;effects;
 StartupNotify=true
 StartupWMClass={APP_ID}
 '''
@@ -90,8 +90,8 @@ Maintainer: motixo <motixo@users.noreply.github.com>
 Homepage: https://github.com/motixo/cosmic-forge
 Depends: libc6 (>= 2.35), libgcc-s1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, libegl1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxi6, python3 (>= 3.11), curl
 Recommends: libvulkan1, xdg-desktop-portal
-Description: Native mod manager for the COSMIC desktop
- Manage glass effects, panel and dock mods, and lock screen mods.
+Description: Glass shader manager for the COSMIC desktop
+ Manage, customize and import glass shaders for COSMIC.
 ''')
     (stage/'DEBIAN/md5sums').write_text(''.join(
         hashlib.md5(p.read_bytes(), usedforsecurity=False).hexdigest() + '  ' + str(p.relative_to(stage)) + '\n'
@@ -108,7 +108,7 @@ def rpm(binary, output, arch, temporary):
     spec.write_text(f'''Name: cosmic-forge
 Version: {VERSION}
 Release: 1
-Summary: Native mod manager for the COSMIC desktop
+Summary: Glass shader manager for the COSMIC desktop
 License: GPL-3.0-only
 URL: https://github.com/motixo/cosmic-forge
 BuildArch: {arch}
@@ -117,7 +117,7 @@ Recommends: vulkan-loader, xdg-desktop-portal
 %global debug_package %{{nil}}
 %global __os_install_post %{{nil}}
 %description
-Manage glass effects, panel and dock mods, and lock screen mods.
+Manage, customize and import glass shaders for COSMIC.
 %install
 mkdir -p %{{buildroot}}
 cp -a {stage}/usr %{{buildroot}}/
@@ -140,7 +140,7 @@ def arch_package(binary, output, arch, temporary):
     (stage/'.PKGINFO').write_text(f'''pkgname = cosmic-forge
 pkgbase = cosmic-forge
 pkgver = {VERSION}-1
-pkgdesc = Native mod manager for the COSMIC desktop
+pkgdesc = Glass shader manager for the COSMIC desktop
 url = https://github.com/motixo/cosmic-forge
 builddate = {EPOCH}
 packager = motixo

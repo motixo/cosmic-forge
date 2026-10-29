@@ -86,7 +86,7 @@ def install(prefix, binary):
     executable = '"' + str(launcher).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%') + '"'
     desktop_text = (
         '[Desktop Entry]\nType=Application\nName=COSMIC Forge\n'
-        'Name[fa]=کازمیک فورج\nComment=Choose and fine tune your desktop effects\n'
+        'Name[fa]=کازمیک فورج\nComment=Manage and fine tune COSMIC glass shaders\n'
         f'Exec={executable}\nIcon={APP_ID}\nTerminal=false\n'
         'Categories=Settings;DesktopSettings;\nKeywords=glass;crystal;aero;shader;effects;\n'
         f'StartupNotify=true\nStartupWMClass={APP_ID}\n'
