@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use crate::catalog::{Control, ControlKind, Effect, valid_identifier};
-use crate::runtime::{ABI, Parameter, RuntimeEffect};
+use crate::runtime::{ABI, Backdrop, Parameter, RuntimeEffect};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
@@ -70,6 +70,7 @@ pub struct Fingerprint {
     pub values: Vec<Value>,
     pub categories: Vec<bool>,
     pub material: [i32; 2],
+    pub backdrops: Vec<Backdrop>,
 }
 
 #[derive(Debug)]
@@ -281,12 +282,17 @@ impl Store {
             self.comp.join("glass_effect"),
             Some(format!("{}\n", serde_json::to_string(&effect.id)?).into_bytes()),
         )]);
+        changes.insert(
+            self.comp.join("forge_backdrop"),
+            Self::backdrop_setting(self.backdrop(effect))?,
+        );
         let runtime = effect.shader.as_ref().map(|shader| RuntimeEffect {
             abi: ABI,
             id: effect.id.clone(),
             base: shader.base.clone(),
             source: shader.source.clone(),
             animated: shader.animated,
+            backdrop: self.backdrop(effect),
             parameters: shader
                 .uniforms
                 .iter()
@@ -314,11 +320,92 @@ impl Store {
         self.commit(changes)
     }
 
+    fn backdrop_path(&self, effect: &Effect) -> PathBuf {
+        self.root
+            .join("cosmic-forge/backdrops")
+            .join(format!("{}.json", effect.id))
+    }
+
+    pub fn backdrop(&self, effect: &Effect) -> Backdrop {
+        fs::read(self.backdrop_path(effect))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_else(|| {
+                effect
+                    .shader
+                    .as_ref()
+                    .map_or(Backdrop::Scene, |s| s.backdrop)
+            })
+    }
+
+    fn backdrop_setting(backdrop: Backdrop) -> Result<Option<Vec<u8>>> {
+        Ok(if backdrop.is_scene() {
+            None
+        } else {
+            Some(ron::to_string(&backdrop)?.into_bytes())
+        })
+    }
+
+    pub fn set_backdrop(&mut self, effect: &Effect, backdrop: Backdrop) -> Result<bool> {
+        effect.validate()?;
+        let mut changes = Changes::from([(
+            self.backdrop_path(effect),
+            Some(serde_json::to_vec(&backdrop)?),
+        )]);
+        if self.selected() == effect.id {
+            changes.insert(
+                self.comp.join("forge_backdrop"),
+                Self::backdrop_setting(backdrop)?,
+            );
+            if effect.shader.is_some() {
+                let text = fs::read_to_string(self.comp.join("forge_runtime"))?;
+                let mut runtime: RuntimeEffect = ron::from_str(&text)?;
+                anyhow::ensure!(
+                    runtime.valid() && runtime.id == effect.id,
+                    "The active shader changed"
+                );
+                runtime.backdrop = backdrop;
+                changes.insert(
+                    self.comp.join("forge_runtime"),
+                    Some(ron::to_string(&runtime)?.into_bytes()),
+                );
+            }
+        }
+        self.commit(changes)
+    }
+
     pub fn set_control(&mut self, control: &Control, value: &Value) -> Result<bool> {
         self.commit(self.controls_changes([(control, value)])?)
     }
     pub fn reset(&mut self, effect: &Effect) -> Result<bool> {
-        let changes = self.controls_changes(effect.controls.iter().map(|c| (c, &c.default)))?;
+        effect.validate()?;
+        let mut changes = self.controls_changes(effect.controls.iter().map(|c| (c, &c.default)))?;
+        changes.insert(self.backdrop_path(effect), None);
+        if self.selected() == effect.id {
+            let default = effect
+                .shader
+                .as_ref()
+                .map_or(Backdrop::Scene, |s| s.backdrop);
+            changes.insert(
+                self.comp.join("forge_backdrop"),
+                Self::backdrop_setting(default)?,
+            );
+            if effect.shader.is_some() {
+                let path = self.comp.join("forge_runtime");
+                let encoded = changes
+                    .get(&path)
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .map_or_else(|| fs::read(&path), Ok)?;
+                let mut runtime: RuntimeEffect = ron::from_str(std::str::from_utf8(&encoded)?)?;
+                anyhow::ensure!(
+                    runtime.valid() && runtime.id == effect.id,
+                    "The active shader changed"
+                );
+                runtime.backdrop = default;
+                changes.insert(path, Some(ron::to_string(&runtime)?.into_bytes()));
+            }
+        }
         self.commit(changes)
     }
     pub fn controls_changes<'a>(
@@ -401,6 +488,7 @@ impl Store {
 
     pub fn fingerprint(&self, effects: &[Effect]) -> Fingerprint {
         Fingerprint {
+            backdrops: effects.iter().map(|e| self.backdrop(e)).collect(),
             material: [
                 crate::material::strength(self),
                 crate::material::opacity(self),
@@ -458,17 +546,29 @@ fn installed_engine(state: &Path, launcher: &Path, minimum_revision: u64) -> Opt
         .then_some(binary)
 }
 
+pub fn renderer_available(minimum_revision: u64) -> bool {
+    installed_engine(
+        &xdg("XDG_STATE_HOME", ".local/state"),
+        &xdg("HOME", "").join(".local/bin/cosmic-comp"),
+        minimum_revision,
+    )
+    .is_some()
+}
+
 pub fn effect_available(effect: &Effect) -> bool {
-    effect.id == "frosted"
-        || installed_engine(
-            &xdg("XDG_STATE_HOME", ".local/state"),
-            &xdg("HOME", "").join(".local/bin/cosmic-comp"),
+    let backdrop = Store::default().backdrop(effect);
+    (effect.id == "frosted" && backdrop == Backdrop::Scene)
+        || renderer_available(
             effect
                 .shader
                 .as_ref()
-                .map_or(0, |shader| shader.renderer_revision()),
+                .map_or(0, |shader| shader.renderer_revision())
+                .max(if backdrop == Backdrop::Wallpaper {
+                    4
+                } else {
+                    0
+                }),
         )
-        .is_some()
 }
 
 pub fn engine_status() -> (&'static str, Option<&'static str>) {

@@ -10,6 +10,7 @@ use cosmic_forge::{
     APP_ID, VERSION,
     catalog::{self, Control, ControlKind, Effect},
     engine, packs,
+    runtime::Backdrop,
     store::{self, Fingerprint, Store, xdg},
 };
 use serde_json::{Value, json};
@@ -32,6 +33,7 @@ enum Page {
 #[derive(Clone, Debug)]
 pub enum Message {
     Value(usize, Value),
+    Backdrop(usize),
     Flush,
     Engine(engine::Action),
     Settings,
@@ -84,6 +86,17 @@ pub struct Forge {
 }
 
 impl Forge {
+    fn backdrop_picker<'a>(&self, effect: &'a Effect) -> Element<'a, Message> {
+        const SOURCES: [&str; 2] = ["Behind window", "Wallpaper only"];
+        let selected = usize::from(self.store.backdrop(effect) == Backdrop::Wallpaper);
+        settings::item::builder("Backdrop source")
+            .control(widget::dropdown(
+                &SOURCES,
+                Some(selected),
+                Message::Backdrop,
+            ))
+            .into()
+    }
     fn remove_effect(&mut self) -> anyhow::Result<()> {
         let Page::Effect(index) = self.page else {
             anyhow::bail!("Select an imported effect first");
@@ -287,6 +300,7 @@ impl Forge {
             .push(text::body(effect.description.as_str()));
         let available = store::effect_available(effect);
         if !available || self.state.selected != effect.id {
+            content = content.push(self.backdrop_picker(effect));
             content = if available {
                 content
                     .push(text::body(
@@ -353,6 +367,7 @@ impl Forge {
                 }
             }
         }
+        section = section.add(self.backdrop_picker(effect));
         let mut actions = widget::row::with_capacity(3);
         if effect.pack_id.is_some() {
             actions =
@@ -689,6 +704,23 @@ impl cosmic::Application for Forge {
                     let control = self.effects[effect].controls[index].clone();
                     self.pending.insert(control.key.clone(), (control, value));
                     self.changed = Instant::now();
+                }
+            }
+            Message::Backdrop(index) => {
+                if self.flush()
+                    && let Page::Effect(effect) = self.page
+                {
+                    let backdrop = if index == 1 {
+                        Backdrop::Wallpaper
+                    } else {
+                        Backdrop::Scene
+                    };
+                    if backdrop == Backdrop::Wallpaper && !store::renderer_available(4) {
+                        self.error = Some("Wallpaper backgrounds require the new compositor engine. Install / update it in Settings.".into());
+                    } else {
+                        let result = self.store.set_backdrop(&self.effects[effect], backdrop);
+                        self.report(result);
+                    }
                 }
             }
             Message::Flush => {

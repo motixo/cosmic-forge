@@ -292,6 +292,7 @@ fn generic_glass_validates_blur_bounds_and_allows_custom_parameters() {
         base: "glass".into(),
         source: pack.effects[0].shader.as_ref().unwrap().source.clone(),
         animated: false,
+        backdrop: Default::default(),
         parameters: vec![],
     };
     assert!(runtime.valid());
@@ -374,6 +375,82 @@ fn animated_shaders_import_and_preserve_legacy_static_runtime() {
     );
     definition["effects"][0]["shader"]["animated"] = json!("true");
     assert!(packs::parse(&serde_json::to_vec(&definition).unwrap()).is_err());
+}
+
+#[test]
+fn backdrop_defaults_overrides_and_renderer_requirements_cover_every_base() {
+    use cosmic_forge::runtime::Backdrop;
+    let temp = tempfile::tempdir().unwrap();
+    let files = pair(&temp.path().join("input"));
+    let mut definition: serde_json::Value =
+        serde_json::from_slice(&fs::read(&files[0]).unwrap()).unwrap();
+    definition["effects"][0]["shader"]["backdrop"] = json!("wallpaper");
+    fs::write(&files[0], serde_json::to_vec(&definition).unwrap()).unwrap();
+    let data = temp.path().join("data");
+    packs::import_files(&data, &files).unwrap();
+    let effects = catalog::load(&data.join("effects")).unwrap();
+    let mut effect = effects[3].clone();
+    let config = temp.path().join("config");
+    let state = temp.path().join("state");
+    let mut store = Store::new(config.clone(), state.clone());
+    for base in ["glass", "aero", "crystal"] {
+        effect.shader.as_mut().unwrap().base = base.into();
+        effect.validate().unwrap();
+        assert_eq!(effect.shader.as_ref().unwrap().renderer_revision(), 4);
+        store.select_effect(&effect).unwrap();
+        let runtime: RuntimeEffect =
+            ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+        assert!(runtime.valid());
+        assert_eq!(runtime.backdrop, Backdrop::Wallpaper);
+    }
+    store.set_backdrop(&effect, Backdrop::Scene).unwrap();
+    store.set_control(&effect.controls[0], &json!(72)).unwrap();
+    store.select_effect(&effects[2]).unwrap();
+    store
+        .set_backdrop(&effects[2], Backdrop::Wallpaper)
+        .unwrap();
+    assert_eq!(
+        Store::text(&store.comp.join("forge_backdrop"), ""),
+        "wallpaper"
+    );
+    assert!(!store.comp.join("forge_runtime").exists());
+    let mut store = Store::new(config, state);
+    assert_eq!(store.backdrop(&effect), Backdrop::Scene);
+    assert_eq!(store.backdrop(&effects[2]), Backdrop::Wallpaper);
+    store.select_effect(&effect).unwrap();
+    let encoded = fs::read_to_string(store.comp.join("forge_runtime")).unwrap();
+    assert!(!encoded.contains(",backdrop:"));
+    assert_eq!(
+        ron::from_str::<RuntimeEffect>(&encoded).unwrap().parameters[0].value,
+        72.0
+    );
+    let mut updated = effect.clone();
+    updated.shader.as_mut().unwrap().backdrop = Backdrop::Wallpaper;
+    store.select_effect(&updated).unwrap();
+    assert_eq!(store.backdrop(&updated), Backdrop::Scene);
+    store.reset(&updated).unwrap();
+    assert_eq!(store.backdrop(&updated), Backdrop::Wallpaper);
+    let encoded = fs::read_to_string(store.comp.join("forge_runtime")).unwrap();
+    assert_eq!(
+        ron::from_str::<RuntimeEffect>(&encoded).unwrap().backdrop,
+        Backdrop::Wallpaper
+    );
+    store.undo().unwrap();
+    assert_eq!(store.backdrop(&updated), Backdrop::Scene);
+    for input in ["window_active", "is_dark"] {
+        updated.shader.as_mut().unwrap().backdrop = Backdrop::Scene;
+        updated
+            .shader
+            .as_mut()
+            .unwrap()
+            .source
+            .push_str(&format!("\nuniform float {input};"));
+        assert_eq!(updated.shader.as_ref().unwrap().renderer_revision(), 4);
+    }
+    definition["effects"][0]["shader"]["backdrop"] = json!("desktop");
+    assert!(packs::parse(&serde_json::to_vec(&definition).unwrap()).is_err());
+    let invalid = encoded.replace("backdrop:wallpaper", "backdrop:desktop");
+    assert!(ron::from_str::<RuntimeEffect>(&invalid).is_err());
 }
 
 #[test]

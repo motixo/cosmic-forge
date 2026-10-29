@@ -70,7 +70,7 @@ thickness and everyday-mode uniforms instead. Common sampling and clipping follo
 the supplied source. The pipeline captures and blurs the backdrop before running
 the custom shader; it does not add arbitrary render passes or CPU plugins.
 
-Additional uniforms must be scalar `float`, start with `forge_`, and map to a
+Additional user-controlled uniforms must be scalar `float`, start with `forge_`, and map to a
 control in the same effect. They receive the raw control value (integer converted
 to float, boolean as 0/1). Use a unique `forge_<effect>_<name>` preference key.
 Do not reuse another creator's keys unless the setting is intentionally shared.
@@ -222,6 +222,65 @@ compatible with older engines. New animation formulas only require editing and r
 shader. The existing single-pass pipeline supplies time, geometry, parameters
 and captured backgrounds; previous-frame buffers, external textures and CPU code
 are separate capabilities.
+
+## Backdrop sources and window state
+
+Forge 0.11+ and renderer revision 4 support these features on every custom base:
+`glass`, `aero` and `crystal`. They work with static and animated shaders.
+
+```json
+"shader": {
+  "base": "glass",
+  "backdrop": "wallpaper",
+  "uniforms": { "forge_blur": "forge_my_effect_blur" }
+}
+```
+
+`shader.backdrop` accepts only `"scene"` and `"wallpaper"`. Omitting it means
+`"scene"`, which preserves existing packs. `scene` samples the composited content
+beneath the surface. `wallpaper` samples only the output's COSMIC wallpaper layer,
+excluding windows, panels and other desktop content. In both modes, `tex` is the
+blurred source and `sharp_tex` is its original, including at maximum blur.
+
+Wallpaper sampling follows the window's position and each output's wallpaper
+layout, scale and transform. The engine uses the actual `wallpaper` background
+layer rendered by COSMIC, including image transitions and wallpaper settings.
+It caches the full output image and its blur; moving windows changes sample
+coordinates, without rerasterizing or reblurring an unchanged wallpaper. Each
+output and graphics context has its own cache. A missing wallpaper layer produces
+a black backdrop, rather than falling back to windows or panels.
+
+Forge's **Backdrop source → Behind window / Wallpaper only** picker overrides
+the pack default for that effect. Choices survive app restarts, effect switching
+and pack updates. **Reset controls** removes the override and restores the pack
+default. The built-in presets have the same picker. Wallpaper choices and shaders
+using either state input below require renderer revision 4; older static scene
+packs retain their previous renderer requirements.
+
+The following inputs come directly from the engine. Do not add them to
+`shader.uniforms` or create pack controls for them:
+
+```glsl
+uniform float window_active;
+uniform float is_dark;
+```
+
+`window_active` is `1.0` for an activated window and `0.0` for an inactive one.
+Subsurfaces, popups and transient children follow their owner. Ownerless surfaces,
+including panels, receive `1.0`.
+`is_dark` follows the system theme mode: `1.0` for dark and `0.0` for light.
+It is read from the theme mode setting and is independent of palette brightness.
+
+Focus and theme changes request redraws and update uniforms without recompiling
+the shader. They also work without `animated: true`. The engine applies no
+inactive-window styling: the shader decides what these values look like.
+For example, after sampling the backdrop and before applying the clip mask:
+
+```glsl
+float transmission = mix(0.7, 1.0, window_active);
+vec3 inactive_tint = mix(vec3(0.9), vec3(0.15), is_dark);
+color.rgb = mix(inactive_tint * color.a, color.rgb, transmission);
+```
 
 ## Publishing updates on GitHub
 

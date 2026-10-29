@@ -15,13 +15,22 @@ pub struct Shader {
     pub source: String,
     #[serde(default, skip_serializing_if = "crate::runtime::is_false")]
     pub animated: bool,
+    #[serde(default, skip_serializing_if = "crate::runtime::Backdrop::is_scene")]
+    pub backdrop: crate::runtime::Backdrop,
     #[serde(default)]
     pub uniforms: BTreeMap<String, String>,
 }
 
 impl Shader {
     pub fn renderer_revision(&self) -> u64 {
-        if self.animated {
+        if self.backdrop == crate::runtime::Backdrop::Wallpaper
+            || self
+                .source
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .any(|word| matches!(word, "window_active" | "is_dark"))
+        {
+            4
+        } else if self.animated {
             3
         } else if self.base == "glass" {
             2
@@ -69,6 +78,10 @@ impl Control {
             valid_identifier(&self.key),
             "Invalid control key: {}",
             self.key
+        );
+        ensure!(
+            !matches!(self.key.as_str(), "forge_runtime" | "forge_backdrop"),
+            "Reserved engine setting"
         );
         ensure!(!self.label.trim().is_empty(), "A control needs a label");
         ensure!(
@@ -144,6 +157,7 @@ impl Effect {
                 base: shader.base.clone(),
                 source: shader.source.clone(),
                 animated: shader.animated,
+                backdrop: shader.backdrop,
                 parameters: shader
                     .uniforms
                     .iter()
