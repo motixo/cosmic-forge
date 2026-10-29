@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Download and verify the latest Forge release; install for the current user."""
+"""Install a verified Forge release, or remove a user installation offline."""
 import argparse
 import hashlib
 import json
@@ -79,11 +79,44 @@ def extract(archive, destination, version):
     return destination/prefix
 
 
+def remove_installation(prefix):
+    record_file = prefix/'state/cosmic-forge/installation.json'
+    if record_file.is_symlink():
+        raise RuntimeError('Preserved a replaced installation record: ' + str(record_file))
+    if not record_file.exists():
+        print('COSMIC Forge is not installed.')
+        return
+    record = json.loads(record_file.read_text())
+    files = record.get('files') if isinstance(record, dict) else None
+    allowed = {str(prefix/name) for name in (
+        'bin/cosmic-forge', f'share/applications/{ICON.removesuffix(".svg")}.desktop',
+        f'share/icons/hicolor/scalable/apps/{ICON}',
+    )}
+    if not isinstance(files, dict) or any(
+        name not in allowed or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest)
+        for name, digest in files.items()
+    ):
+        raise RuntimeError('Invalid installation record: ' + str(record_file))
+    for name, digest in files.items():
+        path = Path(name)
+        if path.is_symlink() or (path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+            raise RuntimeError('Preserved a modified file: ' + name)
+    for name in files:
+        Path(name).unlink(missing_ok=True)
+    record_file.unlink()
+    print('Removed COSMIC Forge launchers. Desktop effect preferences and backups were retained.')
+
+
 def install(prefix, uninstall=False):
     if sys.version_info < (3, 11):
         raise RuntimeError('Python 3.11 or newer is required')
     if os.geteuid() == 0:
         raise RuntimeError('Run this installer as your normal user, without sudo')
+    if '\n' in str(prefix) or '\r' in str(prefix):
+        raise RuntimeError('Installation paths cannot contain line breaks')
+    if uninstall:
+        remove_installation(prefix)
+        return
     distro = platform.freedesktop_os_release()
     ids = {distro.get('ID', ''), *distro.get('ID_LIKE', '').split()}
     if not ids.intersection({'arch', 'fedora', 'ubuntu', 'pop'}):
@@ -111,11 +144,8 @@ def install(prefix, uninstall=False):
         if check.returncode or check.stdout.strip() != f'COSMIC Forge {version} (Rust / libcosmic)':
             raise RuntimeError('This binary cannot run. Install COSMIC runtime libraries (libxkbcommon, Wayland, EGL and fontconfig), then retry.\n' + check.stderr.strip())
         command = [sys.executable, str(root/'scripts/install.py'), '--binary', str(binary), '--prefix', str(prefix)]
-        if uninstall:
-            command.append('--uninstall')
         subprocess.run(command, check=True)
-    if not uninstall:
-        print(f'Launch COSMIC Forge from your app menu or run {prefix}/bin/cosmic-forge. Install the shader compositor from Settings → Patches.')
+    print(f'Launch COSMIC Forge from your app menu or run {prefix}/bin/cosmic-forge. Install the shader compositor from Settings → Patches.')
 
 
 def main():

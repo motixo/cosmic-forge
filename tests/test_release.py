@@ -72,6 +72,72 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(prefs.read_text(),'keep')
             self.assertFalse((root/'prefix').exists())
 
+    def test_uninstall_is_offline_and_preserves_preferences_without_running_a_binary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            prefix = Path(folder)/'prefix with spaces'
+            managed = [prefix/name for name in (
+                'bin/cosmic-forge', 'share/applications/io.github.motixo.CosmicForge.desktop',
+                f'share/icons/hicolor/scalable/apps/{installer.ICON}',
+            )]
+            for path in managed:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'old installation')
+            record = prefix/'state/cosmic-forge/installation.json'
+            record.parent.mkdir(parents=True)
+            record.write_text(json.dumps({'files': {
+                str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in managed
+            }}))
+            preserved = [prefix/name for name in (
+                'bin/cosmic-comp', 'bin/cosmic-settings', 'state/cosmic-forge/backups/original.json',
+                'share/cosmic-forge/packs/custom.json', 'share/cosmic-forge/versions/old/cosmic-forge',
+            )]
+            for path in preserved:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'preserve')
+            with patch.object(installer.os, 'geteuid', return_value=1000), \
+                 patch.object(installer, 'download', side_effect=AssertionError('No downloads during uninstall')), \
+                 patch.object(installer.subprocess, 'run', side_effect=AssertionError('No binary execution during uninstall')), \
+                 patch.object(installer.platform, 'freedesktop_os_release', side_effect=AssertionError('No runtime requirements during uninstall')):
+                installer.install(prefix, uninstall=True)
+                installer.install(prefix, uninstall=True)
+            self.assertFalse(record.exists())
+            self.assertTrue(all(not path.exists() for path in managed))
+            self.assertTrue(all(path.read_bytes() == b'preserve' for path in preserved))
+
+    def test_offline_uninstall_preserves_modified_or_unowned_files(self):
+        for variant in ('modified', 'outside', 'launcher-symlink', 'record-symlink', 'digest'):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as folder:
+                prefix = Path(folder)/'prefix'
+                launcher = prefix/'bin/cosmic-forge'
+                launcher.parent.mkdir(parents=True)
+                launcher.write_bytes(b'original')
+                victim = Path(folder)/'important'
+                victim.write_bytes(b'preserve')
+                files = {str(launcher): hashlib.sha256(b'original').hexdigest()}
+                if variant == 'modified':
+                    launcher.write_bytes(b'user replacement')
+                elif variant == 'outside':
+                    files[str(victim)] = hashlib.sha256(victim.read_bytes()).hexdigest()
+                elif variant == 'launcher-symlink':
+                    launcher.unlink()
+                    launcher.symlink_to(prefix/'missing')
+                elif variant == 'digest':
+                    files[str(launcher)] = 'invalid'
+                record = prefix/'state/cosmic-forge/installation.json'
+                record.parent.mkdir(parents=True)
+                record.write_text(json.dumps({'files': files}))
+                if variant == 'record-symlink':
+                    saved = record.with_suffix('.saved')
+                    record.rename(saved)
+                    record.symlink_to(saved)
+                with patch.object(installer.os, 'geteuid', return_value=1000), \
+                     patch.object(installer, 'download', side_effect=AssertionError('No downloads during uninstall')):
+                    with self.assertRaises(RuntimeError):
+                        installer.install(prefix, uninstall=True)
+                self.assertTrue(record.exists())
+                self.assertTrue(launcher.exists() or launcher.is_symlink())
+                self.assertEqual(victim.read_bytes(), b'preserve')
+
     @unittest.skipUnless((ROOT/'target/release/cosmic-forge').exists(),'Build the native executable first')
     def test_verified_portable_release_installs_updates_and_removes_only_forge(self):
         spec=importlib.util.spec_from_file_location('package_release',ROOT/'scripts/package_release.py')
