@@ -37,7 +37,7 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     );
     assert!(effects[1..].iter().all(|e| e.shader.is_some()));
     let mica = effects.iter().find(|e| e.id == "mica").unwrap();
-    assert_eq!(mica.shader.as_ref().unwrap().renderer_revision(), 4);
+    assert_eq!(mica.shader.as_ref().unwrap().renderer_revision(), 5);
     assert_eq!(
         mica.shader.as_ref().unwrap().backdrop,
         cosmic_forge::runtime::Backdrop::Wallpaper

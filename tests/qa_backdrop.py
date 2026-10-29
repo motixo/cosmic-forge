@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 import time
+from PIL import ImageChops
 
 from qa_native import ROOT, Session
 
@@ -30,7 +31,7 @@ def main():
         session.click(920, 623)
 
     try:
-        revision(4)
+        revision(5)
         session.select_effect(2)
         before = {key: session.get(key) for key in ['aero_color', 'aero_reflections', 'aero_blur_amount']}
         wallpaper()
@@ -46,10 +47,22 @@ def main():
         check('Returning to an effect restores its saved source', session.get('forge_backdrop') == 'wallpaper')
         session.click(940, 724)
         check('Reset restores the source and material defaults', not preference.exists() and session.get('forge_backdrop') is None and session.get('aero_blur_amount') == '45')
-        revision(3)
-        wallpaper()
-        check('An older renderer cannot activate wallpaper sampling', not preference.exists() and session.get('forge_backdrop') is None)
-        session.capture('wallpaper-requires-update')
+        supported = session.capture('wallpaper-supported')
+        revision(4)
+        incompatible = session.capture('wallpaper-requires-update')
+        region = (320, 636, 1008, 695)
+        check('An incompatible renderer hides the backdrop picker',
+              ImageChops.difference(supported.crop(region), incompatible.crop(region)).getbbox() is not None)
+        check('Hiding the picker preserves the source preference', not preference.exists() and session.get('forge_backdrop') is None)
+        revision(5)
+        session.select_effect(0)
+        supported = session.capture('frosted-with-engine')
+        (session.path / 'home/.local/bin/cosmic-comp').unlink()
+        time.sleep(1)
+        missing = session.capture('frosted-without-engine')
+        region = (320, 200, 1008, 620)
+        check('Frosted Glass hides its backdrop picker without an engine',
+              ImageChops.difference(supported.crop(region), missing.crop(region)).getbbox() is not None)
     finally:
         session.close()
 

@@ -1,5 +1,14 @@
 ## Changes since v0.10.0
 
+### Fixed in 0.11.2
+
+- Hide **Backdrop source** when the Forge compositor is missing or its renderer
+  is too old, including on the stock Frosted Glass page and unavailable effects.
+- Require **renderer revision 5** for wallpaper backgrounds. This avoids the
+  Frosted/Aero rendering failure in engine-v0.5.0; install engine-v0.5.1 before
+  using Wallpaper only. Saved per-effect preferences remain intact.
+- Merge the official catalog ordering fix and pin shader pack 7 with Mica.
+
 ### Added
 
 - **Mica in the official shader catalog:** the bundled shader repository now
@@ -25,14 +34,14 @@
 - **Wallpaper and window-state pack support:** optional `shader.backdrop` accepts
   `scene` or `wallpaper`. Shaders can use the engine's `window_active` and
   `is_dark` inputs without creating pack controls for them.
-- Updated [shader authoring documentation](https://github.com/motixo/cosmic-forge/blob/v0.11.1/docs/adding-effects.md)
+- Updated [shader authoring documentation](https://github.com/motixo/cosmic-forge/blob/v0.11.2/docs/adding-effects.md)
   with the animation, motion, background and window-state contracts.
 
 ### Compatibility
 
-- **Animation requires renderer revision 3 or newer. Wallpaper backgrounds and
-  window-state inputs require renderer revision 4.** Install
-  [Forge Engine engine-v0.5.0](https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-v0.5.0)
+- **Animation requires renderer revision 3 or newer. Wallpaper backgrounds
+  require renderer revision 5; window-state inputs require revision 4.** Install
+  [Forge Engine engine-v0.5.1](https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-v0.5.1)
   through **Settings → Patches** to use all of these features, then sign out and
   back in. Updating Forge alone does not replace the desktop compositor.
 - Forge detects the renderer requirement of imported packs and saved wallpaper
@@ -64,4 +73,4 @@ Local validation passed: 41 Rust tests, `cargo fmt --check`, Clippy with warning
 denied, the release build, and native About/background-picker UI checks. Engine
 rendering checks are detailed in its separate release notes.
 
-[Full source changes](https://github.com/motixo/cosmic-forge/compare/v0.10.0...v0.11.1)
+[Full source changes](https://github.com/motixo/cosmic-forge/compare/v0.10.0...v0.11.2)

@@ -225,7 +225,7 @@ are separate capabilities.
 
 ## Backdrop sources and window state
 
-Forge 0.11+ and renderer revision 4 support these features on every custom base:
+Forge 0.11.2+ and renderer revision 5 support background selection on every custom base:
 `glass`, `aero` and `crystal`. They work with static and animated shaders.
 
 ```json
@@ -253,9 +253,10 @@ a black backdrop, rather than falling back to windows or panels.
 Forge's **Backdrop source → Behind window / Wallpaper only** picker overrides
 the pack default for that effect. Choices survive app restarts, effect switching
 and pack updates. **Reset controls** removes the override and restores the pack
-default. The built-in presets have the same picker. Wallpaper choices and shaders
-using either state input below require renderer revision 4; older static scene
-packs retain their previous renderer requirements.
+default. The built-in presets have the same picker. It is hidden without a compatible
+Forge compositor. Wallpaper choices require renderer revision 5, which fixes
+wallpaper rendering on built-in Frosted and Aero. The state inputs below require
+revision 4. Older static scene packs retain their previous renderer requirements.
 
 The following inputs come directly from the engine. Do not add them to
 `shader.uniforms` or create pack controls for them:
