@@ -237,7 +237,7 @@ impl Forge {
             let changes = self
                 .store
                 .controls_changes(self.pending.values().map(|(c, v)| (c, v)))?;
-            self.store.commit(changes, "Adjust effect")
+            self.store.commit(changes)
         })();
         if self.report(result) {
             self.pending.clear();
@@ -488,32 +488,19 @@ impl cosmic::Application for Forge {
         if !self.core.nav_bar_active() {
             return None;
         }
-        fn group<'a>(
-            title: &'static str,
-            model: &'a nav_bar::Model,
-            select: fn(nav_bar::Id) -> cosmic::Action<Message>,
-        ) -> Element<'a, cosmic::Action<Message>> {
-            widget::column::with_capacity(2)
-                .spacing(4)
-                .push(widget::container(text::heading(title).size(16)).padding([8, 16]))
-                .push(
-                    widget::segmented_button::vertical(model)
-                        .button_height(32)
-                        .button_padding([8, 24, 8, 24])
-                        .button_spacing(8)
-                        .spacing(8)
-                        .style(cosmic::theme::SegmentedButton::NavBar)
-                        .on_activate(select),
-                )
-                .into()
-        }
-        let groups =
-            widget::column::with_capacity(1)
-                .spacing(16)
-                .push(group("Shaders", &self.nav, |id| {
-                    cosmic::Action::Cosmic(cosmic::app::Action::NavBar(id))
-                }));
-        let mut sidebar = widget::container(widget::scrollable(groups).height(Length::Fill))
+        let shaders = widget::column::with_capacity(2)
+            .spacing(4)
+            .push(widget::container(text::heading("Shaders").size(16)).padding([8, 16]))
+            .push(
+                widget::segmented_button::vertical(&self.nav)
+                    .button_height(32)
+                    .button_padding([8, 24, 8, 24])
+                    .button_spacing(8)
+                    .spacing(8)
+                    .style(cosmic::theme::SegmentedButton::NavBar)
+                    .on_activate(|id| cosmic::Action::Cosmic(cosmic::app::Action::NavBar(id))),
+            );
+        let mut sidebar = widget::container(widget::scrollable(shaders).height(Length::Fill))
             .padding(8)
             .width(Length::Shrink)
             .height(Length::Fill)

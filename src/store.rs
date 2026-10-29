@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use crate::catalog::{Control, ControlKind, Effect, valid_identifier};
 use crate::runtime::{ABI, Parameter, RuntimeEffect};
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -31,23 +31,11 @@ pub const BLUR_NAMES: [&str; 14] = [
     "ExtremelyHigh",
     "ExtremelyHigh2",
 ];
-pub const CATEGORIES: [(&str, &str, &str); 4] = [
-    (
-        "frosted_windows",
-        "Windows",
-        "Application windows and dialogs",
-    ),
-    ("frosted_panel", "Panel & dock", "Desktop panels and dock"),
-    (
-        "frosted_applets",
-        "Applets",
-        "Menus opened from panels and dock",
-    ),
-    (
-        "frosted_system_interface",
-        "System interface",
-        "Launcher, overview and on-screen controls",
-    ),
+const CATEGORIES: [&str; 4] = [
+    "frosted_windows",
+    "frosted_panel",
+    "frosted_applets",
+    "frosted_system_interface",
 ];
 pub type Changes = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
@@ -70,7 +58,6 @@ struct BackupEntry {
 }
 #[derive(Debug)]
 struct Edit {
-    label: String,
     before: BTreeMap<PathBuf, Snapshot>,
     after: Changes,
 }
@@ -89,7 +76,6 @@ pub struct Fingerprint {
 pub struct Store {
     pub root: PathBuf,
     pub comp: PathBuf,
-    pub state: PathBuf,
     pub backup: PathBuf,
     history: Vec<Edit>,
     originals: BTreeMap<PathBuf, BackupEntry>,
@@ -117,7 +103,6 @@ impl Store {
         Self {
             comp: root.join("cosmic/com.system76.CosmicComp/v1"),
             root,
-            state,
             backup,
             history: Vec::new(),
             originals: BTreeMap::new(),
@@ -156,18 +141,6 @@ impl Store {
         let mode = if self.dark() { "Dark" } else { "Light" };
         self.root
             .join(format!("cosmic/com.system76.CosmicTheme.{mode}/v2/{key}"))
-    }
-    pub fn theme_paths(&self, key: &str) -> Vec<PathBuf> {
-        ["Dark", "Light"]
-            .into_iter()
-            .flat_map(|mode| {
-                ["", ".Builder"].map(move |suffix| {
-                    self.root.join(format!(
-                        "cosmic/com.system76.CosmicTheme.{mode}{suffix}/v2/{key}"
-                    ))
-                })
-            })
-            .collect()
     }
     pub fn accent(&self) -> String {
         let data = Self::text(&self.theme_path("accent"), "");
@@ -212,14 +185,8 @@ impl Store {
         }
     }
 
-    pub fn category(&self, key: &str) -> bool {
+    fn category(&self, key: &str) -> bool {
         Self::text(&self.theme_path(key), "false") == "true"
-    }
-    pub fn can_undo(&self) -> bool {
-        !self.history.is_empty()
-    }
-    pub fn undo_label(&self) -> &str {
-        self.history.last().map_or("Undo", |e| &e.label)
     }
 
     fn snapshot(path: &Path) -> Result<Snapshot> {
@@ -263,7 +230,7 @@ impl Store {
         }
     }
 
-    pub fn commit(&mut self, mut changes: Changes, label: &str) -> Result<bool> {
+    pub fn commit(&mut self, mut changes: Changes) -> Result<bool> {
         let mut before = BTreeMap::new();
         for path in changes.keys() {
             before.insert(path.clone(), Self::snapshot(path)?);
@@ -299,7 +266,6 @@ impl Store {
             completed.push(path);
         }
         self.history.push(Edit {
-            label: label.into(),
             before,
             after: changes,
         });
@@ -307,17 +273,6 @@ impl Store {
             self.history.remove(0);
         }
         Ok(true)
-    }
-
-    pub fn select(&mut self, identifier: &str) -> Result<bool> {
-        ensure!(valid_identifier(identifier), "Invalid effect identifier");
-        self.commit(
-            BTreeMap::from([(
-                self.comp.join("glass_effect"),
-                Some(format!("{}\n", serde_json::to_string(identifier)?).into_bytes()),
-            )]),
-            "Change effect",
-        )
     }
 
     pub fn select_effect(&mut self, effect: &Effect) -> Result<bool> {
@@ -355,32 +310,15 @@ impl Store {
                 .map(|r| ron::to_string(&r).map(String::into_bytes))
                 .transpose()?,
         );
-        self.commit(changes, "Change effect")
-    }
-
-    pub fn control_changes(&self, control: &Control, value: &Value) -> Result<Changes> {
-        self.controls_changes([(control, value)])
+        self.commit(changes)
     }
 
     pub fn set_control(&mut self, control: &Control, value: &Value) -> Result<bool> {
-        self.commit(self.control_changes(control, value)?, &control.label)
-    }
-    pub fn set_category(&mut self, key: &str, enabled: bool) -> Result<bool> {
-        ensure!(
-            CATEGORIES.iter().any(|item| item.0 == key),
-            "Unknown glass surface"
-        );
-        self.commit(
-            self.theme_paths(key)
-                .into_iter()
-                .map(|p| (p, Some(format!("{enabled}\n").into_bytes())))
-                .collect(),
-            "Change glass surfaces",
-        )
+        self.commit(self.controls_changes([(control, value)])?)
     }
     pub fn reset(&mut self, effect: &Effect) -> Result<bool> {
         let changes = self.controls_changes(effect.controls.iter().map(|c| (c, &c.default)))?;
-        self.commit(changes, &format!("Reset {}", effect.name))
+        self.commit(changes)
     }
     pub fn controls_changes<'a>(
         &self,
@@ -473,7 +411,7 @@ impl Store {
                 .iter()
                 .flat_map(|e| e.controls.iter().map(|c| self.value(c)))
                 .collect(),
-            categories: CATEGORIES.iter().map(|c| self.category(c.0)).collect(),
+            categories: CATEGORIES.iter().map(|c| self.category(c)).collect(),
         }
     }
 }

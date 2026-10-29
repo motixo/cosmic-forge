@@ -183,18 +183,16 @@ fn engine_cache_preserves_symlinks_and_their_targets() {
 }
 
 #[test]
-fn install_and_build_route_to_distinct_installer_actions_in_the_same_release() {
+fn install_uses_the_verified_release_without_requesting_a_build() {
     if std::env::var_os("FORGE_TEST_ACTION_CHILD").is_some() {
-        for action in [engine::Action::Install, engine::Action::Build] {
-            let mut stages = Vec::new();
-            assert!(
-                engine::setup(action, |stage| stages.push(stage))
-                    .unwrap()
-                    .contains("already installed")
-            );
-            assert!(stages.contains(&engine::Progress::Downloading));
-            assert_eq!(stages.last(), Some(&engine::Progress::AlreadyInstalled));
-        }
+        let mut stages = Vec::new();
+        assert!(
+            engine::setup(engine::Action::Install, |stage| stages.push(stage))
+                .unwrap()
+                .contains("already installed")
+        );
+        assert!(stages.contains(&engine::Progress::Downloading));
+        assert_eq!(stages.last(), Some(&engine::Progress::AlreadyInstalled));
         return;
     }
     use std::os::unix::fs::PermissionsExt;
@@ -243,7 +241,7 @@ sys.stdout.write('200')
     let result = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "install_and_build_route_to_distinct_installer_actions_in_the_same_release",
+            "install_uses_the_verified_release_without_requesting_a_build",
             "--nocapture",
         ])
         .env("FORGE_TEST_ACTION_CHILD", "1")
@@ -268,13 +266,7 @@ sys.stdout.write('200')
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(
-        calls,
-        [
-            json!({"build":false,"tag":"engine-test-actions"}),
-            json!({"build":true,"tag":"engine-test-actions"})
-        ]
-    );
+    assert_eq!(calls, [json!({"build":false,"tag":"engine-test-actions"})]);
 }
 
 #[test]

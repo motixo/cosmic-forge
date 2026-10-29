@@ -77,7 +77,7 @@ Do not reuse another creator's keys unless the setting is intentionally shared.
 There are at most 32 controls/uniforms, shader source is at most 64 KiB, and the
 whole pack is at most 2 MiB. Controls may reuse the documented Crystal/Aero keys.
 Other compositor preferences are excluded. Opacity uses the existing theme
-`alpha_map` control and stays shared; surface switches remain in Forge settings.
+`alpha_map` control and stays shared; surface switches are managed by COSMIC Settings.
 
 For readable source, keep metadata and `.frag` files separately. For example,
 create `effects/prism.json` with one effect object and its `shader.base` and

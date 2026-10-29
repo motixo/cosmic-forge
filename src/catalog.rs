@@ -33,9 +33,6 @@ pub enum ControlKind {
 fn comp_target() -> String {
     "comp".into()
 }
-fn preview_kind() -> String {
-    "frosted".into()
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Control {
@@ -100,8 +97,6 @@ pub struct Effect {
     pub name: String,
     pub tagline: String,
     pub description: String,
-    #[serde(default = "preview_kind")]
-    pub preview: String,
     pub controls: Vec<Control>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shader: Option<Shader>,

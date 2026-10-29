@@ -188,7 +188,6 @@ fn save_receipt(root: &std::path::Path) -> Result<()> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Install,
-    Build,
     Restore,
 }
 
@@ -276,13 +275,8 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?);
-    if !restore {
-        if let Some(tag) = release_tag {
-            command.args(["--release-tag", &tag]);
-        }
-        if action == Action::Build {
-            command.arg("--build");
-        }
+    if let Some(tag) = release_tag {
+        command.args(["--release-tag", &tag]);
     }
     let mut child = command
         .spawn()

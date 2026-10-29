@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use cosmic_forge::{
     catalog::{self, Effect},
-    store::{CATEGORIES, Store},
+    store::Store,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt};
@@ -26,6 +26,18 @@ impl Fixture {
         fs::create_dir_all(&self.store.comp).unwrap();
         fs::write(self.store.comp.join(key), value).unwrap();
     }
+    fn theme_paths(&self, key: &str) -> Vec<std::path::PathBuf> {
+        ["Dark", "Light"]
+            .into_iter()
+            .flat_map(|mode| {
+                ["", ".Builder"].map(move |suffix| {
+                    self.store.root.join(format!(
+                        "cosmic/com.system76.CosmicTheme.{mode}{suffix}/v2/{key}"
+                    ))
+                })
+            })
+            .collect()
+    }
 }
 #[test]
 fn opening_and_reading_is_read_only() {
@@ -33,7 +45,7 @@ fn opening_and_reading_is_read_only() {
     assert_eq!(f.store.selected(), "frosted");
     f.store.fingerprint(&f.effects);
     assert!(!f.store.root.exists());
-    assert!(!f.store.state.exists());
+    assert!(!f._temp.path().join("state").exists());
 }
 #[test]
 fn selection_preserves_crystal_and_undo_restores_absence() {
@@ -41,7 +53,7 @@ fn selection_preserves_crystal_and_undo_restores_absence() {
     f.write("crystal_enabled", "true");
     f.write("crystal_thickness", "95");
     assert_eq!(f.store.selected(), "crystal");
-    f.store.select("aero").unwrap();
+    f.store.select_effect(&f.effects[2]).unwrap();
     assert_eq!(f.store.selected(), "aero");
     assert_eq!(
         Store::text(&f.store.comp.join("crystal_thickness"), ""),
@@ -86,30 +98,15 @@ fn malformed_values_fall_back() {
     }
 }
 #[test]
-fn surfaces_update_all_modes_and_builders_without_palette_changes() {
-    let mut f = Fixture::new();
-    let accent = f.store.theme_path("accent");
-    fs::create_dir_all(accent.parent().unwrap()).unwrap();
-    fs::write(&accent, "(base: \"#123456FF\")").unwrap();
-    for (key, _, _) in CATEGORIES {
-        f.store.set_category(key, true).unwrap();
-        for path in f.store.theme_paths(key) {
-            assert_eq!(Store::text(&path, ""), "true");
-        }
-    }
-    assert_eq!(Store::text(&accent, ""), "(base: \"#123456FF\")");
-    assert!(f.store.set_category("accent", false).is_err());
-}
-#[test]
 fn frosted_uses_ron_enums_and_is_undoable() {
     let mut f = Fixture::new();
     let c = f.effects[0].controls[0].clone();
     f.store.set_control(&c, &json!(13)).unwrap();
-    for path in f.store.theme_paths("frosted") {
+    for path in f.theme_paths("frosted") {
         assert_eq!(Store::text(&path, ""), "ExtremelyHigh2");
     }
     f.store.undo().unwrap();
-    for path in f.store.theme_paths("frosted") {
+    for path in f.theme_paths("frosted") {
         assert!(!path.exists());
     }
 }
@@ -118,7 +115,7 @@ fn reset_is_one_undo_and_preserves_other_effects_and_selection() {
     let mut f = Fixture::new();
     let e = f.effects[2].clone();
     f.write("crystal_thickness", "80");
-    f.store.select("aero").unwrap();
+    f.store.select_effect(&f.effects[2]).unwrap();
     for c in &e.controls {
         f.store.set_control(c, &json!(9)).unwrap();
     }
@@ -139,11 +136,10 @@ fn reset_is_one_undo_and_preserves_other_effects_and_selection() {
 #[test]
 fn undo_refuses_external_edits() {
     let mut f = Fixture::new();
-    f.store.select("aero").unwrap();
+    f.store.select_effect(&f.effects[2]).unwrap();
     f.write("glass_effect", "\"crystal\"");
     assert!(f.store.undo().is_err());
     assert_eq!(f.store.selected(), "crystal");
-    assert!(f.store.can_undo());
 }
 #[test]
 fn backup_keeps_original_bytes_and_file_permissions() {
@@ -152,8 +148,8 @@ fn backup_keeps_original_bytes_and_file_permissions() {
     f.write("glass_effect", "\"frosted\"\n");
     let path = f.store.comp.join("glass_effect");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-    f.store.select("aero").unwrap();
-    f.store.select("crystal").unwrap();
+    f.store.select_effect(&f.effects[2]).unwrap();
+    f.store.select_effect(&f.effects[1]).unwrap();
     let backup: serde_json::Value =
         serde_json::from_slice(&fs::read(&f.store.backup).unwrap()).unwrap();
     let data = backup[path.to_str().unwrap()]["data"].as_str().unwrap();
@@ -182,16 +178,16 @@ fn incomplete_transaction_rolls_back() {
         (f.store.comp.join("a_good"), Some(b"changed".to_vec())),
         (f.store.comp.join("z_blocker"), Some(b"failure".to_vec())),
     ]);
-    assert!(f.store.commit(changes, "test").is_err());
+    assert!(f.store.commit(changes).is_err());
     assert_eq!(Store::text(&f.store.comp.join("a_good"), ""), "original");
-    assert!(!f.store.can_undo());
+    assert!(!f.store.undo().unwrap());
 }
 #[test]
 fn no_op_does_not_create_history() {
     let mut f = Fixture::new();
     f.write("glass_effect", "\"aero\"\n");
-    assert!(!f.store.select("aero").unwrap());
-    assert!(!f.store.can_undo());
+    assert!(!f.store.select_effect(&f.effects[2]).unwrap());
+    assert!(!f.store.undo().unwrap());
     assert!(!f.store.backup.exists());
 }
 #[test]
@@ -237,7 +233,9 @@ fn booleans_and_identifier_validation() {
     f.store.set_control(&c, &json!(false)).unwrap();
     assert_eq!(f.store.value(&c), false);
     assert!(f.store.set_control(&c, &json!(1)).is_err());
-    assert!(f.store.select("../../escape").is_err());
+    let mut invalid = f.effects[2].clone();
+    invalid.id = "../../escape".into();
+    assert!(f.store.select_effect(&invalid).is_err());
     let mut c = f.effects[0].controls[0].clone();
     c.kind = catalog::ControlKind::Boolean;
     c.default = json!(false);
@@ -256,7 +254,7 @@ fn opacity_is_shared_across_effects_and_updates_native_glass_surfaces() {
     for effect in &f.effects {
         assert_eq!(f.store.value(effect.controls.last().unwrap()), 25);
     }
-    for path in f.store.theme_paths("alpha_map") {
+    for path in f.theme_paths("alpha_map") {
         let map: cosmic_theme::AlphaMap =
             ron::from_str(&fs::read_to_string(path).unwrap()).unwrap();
         assert!((map.guess_offset() - 0.25).abs() < 0.00001);
@@ -314,7 +312,7 @@ fn grouped_thickness_and_opacity_keep_derived_colors_consistent() {
         .store
         .controls_changes([(&opacity, &amount), (&thickness, &strength)])
         .unwrap();
-    f.store.commit(changes, "material").unwrap();
+    f.store.commit(changes).unwrap();
     for mode in ["Dark", "Light"] {
         let dir = f
             .store
@@ -378,5 +376,5 @@ fn malformed_builder_does_not_reset_glass_colors_to_defaults() {
     assert!(f.store.set_control(&control, &json!(40)).is_err());
     assert!(!f.store.theme_path("alpha_map").exists());
     assert!(!f.store.theme_path("transparent_background").exists());
-    assert!(!f.store.can_undo());
+    assert!(!f.store.undo().unwrap());
 }
