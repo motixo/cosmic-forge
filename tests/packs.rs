@@ -569,6 +569,6 @@ fn github_download_checks_digest_and_keeps_community_effects() {
             "must not fetch"
         ))
         .unwrap(),
-        "No glass effect pack published yet"
+        "No effect pack published yet"
     );
 }

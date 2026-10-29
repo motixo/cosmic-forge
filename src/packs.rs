@@ -297,7 +297,7 @@ pub fn install(data_root: &Path, bytes: &[u8], official: bool) -> Result<String>
         );
         if previous.revision == pack.revision {
             if serde_json::to_vec(&previous)? == serde_json::to_vec(&pack)? {
-                return Ok("Glass effects are up to date".into());
+                return Ok("Effects are up to date".into());
             }
             ensure!(!official, "Official pack revision must increase");
         }
@@ -425,7 +425,7 @@ pub fn update_from_release(
         .as_array()
         .and_then(|a| a.iter().find(|a| a["name"] == ASSET))
     else {
-        return Ok("No glass effect pack published yet".into());
+        return Ok("No effect pack published yet".into());
     };
     let url = asset["browser_download_url"]
         .as_str()
@@ -474,7 +474,7 @@ pub fn update(data_root: &Path) -> Result<String> {
         "https://api.github.com/repos/{REPOSITORY}/releases/latest"
     ))?;
     let result = if status == 404 {
-        "No glass effect pack published yet".into()
+        "No effect pack published yet".into()
     } else {
         update_from_release(data_root, &release, |url| {
             let (status, bytes) = download(url)?;
