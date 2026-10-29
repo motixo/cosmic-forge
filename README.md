@@ -1,56 +1,25 @@
 <p align="center"><img src="resources/icons/io.github.motixo.CosmicForge.svg" width="96" alt="COSMIC Forge icon"></p>
 <h1 align="center">COSMIC Forge</h1>
 
-A glass shader manager for the **COSMIC desktop**. Choose and adjust shaders,
-or import your own effects with JSON settings and `.frag` files.
+Custom shaders for the **COSMIC desktop**. Apply and adjust effects,
+or import your own JSON + `.frag` packs.
 
 ## Install
 
-Ubuntu/Pop!_OS 24.04+, Fedora 43+ and current Arch Linux. Requires COSMIC,
-Python 3.11+ and curl. Ubuntu/Pop and Fedora support x86_64 and ARM64;
-Arch packages support x86_64.
+For Ubuntu/Pop!_OS, Fedora and Arch Linux. Requires COSMIC, Python 3.11+ and curl.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh | sh
 ```
 
-Installs the latest verified binary in `~/.local`, without sudo or Rust.
-Run the same command to update. Open **COSMIC Forge** from your app menu or run
-`~/.local/bin/cosmic-forge`.
+Install the compositor from **Settings → Patches**, then sign out and back in.
 
-Native packages are available in [Releases](https://github.com/motixo/cosmic-forge/releases/latest).
-Download the package for your CPU:
+[Native packages](https://github.com/motixo/cosmic-forge/releases/latest) · [Create and import shaders](docs/adding-effects.md)
 
-| System | Package | Install |
-| --- | --- | --- |
-| Ubuntu / Pop!_OS | `.deb` | `sudo apt install ./cosmic-forge_*.deb` |
-| Fedora | `.rpm` | `sudo dnf install ./cosmic-forge-*.rpm` |
-| Arch Linux | `.pkg.tar.zst` | `sudo pacman -U ./cosmic-forge-*.pkg.tar.zst` |
-
-To remove a user installation, or switch to a native package:
+## Uninstall
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh | sh -s -- --uninstall
 ```
 
-Preferences and engine installations are retained. Application installation adds
-only Forge; install the shader compositor from **Settings → Patches** and sign out
-and back in to activate it. Prebuilt engine pins currently cover COSMIC 1.10/1.11.
-
-## Build from source
-
-Requires Rust 1.93+, Python 3.11+ and native COSMIC development libraries.
-Release archives require glibc 2.35+.
-
-```sh
-git clone --recurse-submodules https://github.com/motixo/cosmic-forge.git
-cd cosmic-forge
-cargo build --release --locked
-python3 scripts/install.py
-```
-
-The header update button refreshes [shaders](https://github.com/motixo/cosmic-forge-shaders)
-and checks for [compositor engine](https://github.com/motixo/cosmic-forge-engine)
-updates independently of app releases.
-
-[Adding effects](docs/adding-effects.md) · GPL-3.0-only
+GPL-3.0-only
