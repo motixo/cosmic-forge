@@ -582,7 +582,7 @@ pub fn effect_available(effect: &Effect) -> bool {
                 .as_ref()
                 .map_or(0, |shader| shader.renderer_revision())
                 .max(if backdrop == Backdrop::Wallpaper {
-                    4
+                    crate::engine::WALLPAPER_RENDERER_REVISION
                 } else {
                     0
                 }),

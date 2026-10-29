@@ -404,7 +404,7 @@ fn backdrop_defaults_overrides_and_renderer_requirements_cover_every_base() {
     for base in ["glass", "aero", "crystal"] {
         effect.shader.as_mut().unwrap().base = base.into();
         effect.validate().unwrap();
-        assert_eq!(effect.shader.as_ref().unwrap().renderer_revision(), 4);
+        assert_eq!(effect.shader.as_ref().unwrap().renderer_revision(), 5);
         store.select_effect(&effect).unwrap();
         let runtime: RuntimeEffect =
             ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();

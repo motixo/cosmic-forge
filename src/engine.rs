@@ -11,6 +11,7 @@ use std::{
 
 pub const REPOSITORY: &str = "motixo/cosmic-forge-engine";
 pub const ASSET: &str = "cosmic-forge-engine.json";
+pub const WALLPAPER_RENDERER_REVISION: u64 = 5;
 // Only offline stock recovery is embedded; engine setup uses verified releases.
 const RECOVERY: &str = include_str!("../engine/recovery.py");
 

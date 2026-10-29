@@ -300,8 +300,11 @@ impl Forge {
             .push(text::body(effect.tagline.as_str()))
             .push(text::body(effect.description.as_str()));
         let available = store::effect_available(effect);
+        let backdrop_available = store::renderer_available(engine::WALLPAPER_RENDERER_REVISION);
         if !available || self.state.selected != effect.id {
-            content = content.push(self.backdrop_picker(effect));
+            if backdrop_available {
+                content = content.push(self.backdrop_picker(effect));
+            }
             content = if available {
                 content
                     .push(text::body(
@@ -368,7 +371,9 @@ impl Forge {
                 }
             }
         }
-        section = section.add(self.backdrop_picker(effect));
+        if backdrop_available {
+            section = section.add(self.backdrop_picker(effect));
+        }
         let mut actions = widget::row::with_capacity(3);
         if effect.pack_id.is_some() {
             actions =
@@ -717,7 +722,9 @@ impl cosmic::Application for Forge {
                     } else {
                         Backdrop::Scene
                     };
-                    if backdrop == Backdrop::Wallpaper && !store::renderer_available(4) {
+                    if backdrop == Backdrop::Wallpaper
+                        && !store::renderer_available(engine::WALLPAPER_RENDERER_REVISION)
+                    {
                         self.error = Some("Wallpaper backgrounds require the new compositor engine. Install / update it in Settings.".into());
                     } else {
                         let result = self.store.set_backdrop(&self.effects[effect], backdrop);

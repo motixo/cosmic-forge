@@ -23,11 +23,12 @@ pub struct Shader {
 
 impl Shader {
     pub fn renderer_revision(&self) -> u64 {
-        if self.backdrop == crate::runtime::Backdrop::Wallpaper
-            || self
-                .source
-                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .any(|word| matches!(word, "window_active" | "is_dark"))
+        if self.backdrop == crate::runtime::Backdrop::Wallpaper {
+            crate::engine::WALLPAPER_RENDERER_REVISION
+        } else if self
+            .source
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|word| matches!(word, "window_active" | "is_dark"))
         {
             4
         } else if self.animated {
