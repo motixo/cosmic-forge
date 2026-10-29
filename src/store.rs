@@ -555,6 +555,24 @@ pub fn renderer_available(minimum_revision: u64) -> bool {
     .is_some()
 }
 
+fn compositor_version(state: &Path, launcher: &Path) -> Option<String> {
+    installed_engine(state, launcher, 0)?;
+    let record: Value = serde_json::from_slice(
+        &fs::read(state.join("cosmic-forge/engine-installation.json")).ok()?,
+    )
+    .ok()?;
+    let version = record["cosmic_version"].as_str()?;
+    let renderer = record["renderer_revision"].as_u64().unwrap_or(1);
+    Some(format!("COSMIC {version} · renderer {renderer}"))
+}
+
+pub fn installed_compositor_version() -> Option<String> {
+    compositor_version(
+        &xdg("XDG_STATE_HOME", ".local/state"),
+        &xdg("HOME", "").join(".local/bin/cosmic-comp"),
+    )
+}
+
 pub fn effect_available(effect: &Effect) -> bool {
     let backdrop = Store::default().backdrop(effect);
     (effect.id == "frosted" && backdrop == Backdrop::Scene)
@@ -641,6 +659,7 @@ mod engine_tests {
         .unwrap();
         assert_eq!(installed_engine(&state, &launcher, 0), Some(binary.clone()));
         assert!(installed_engine(&state, &launcher, 1).is_none());
+        assert_eq!(compositor_version(&state, &launcher), None);
         let digest: String = Sha256::digest(current)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -648,12 +667,17 @@ mod engine_tests {
         fs::write(
             state.join("cosmic-forge/engine-installation.json"),
             serde_json::to_vec(&json!({
-                "abi":1, "destination":destination, "launcher":launcher, "launcher_sha256":digest
+                "abi":1, "destination":destination, "launcher":launcher, "launcher_sha256":digest,
+                "cosmic_version":"1.10.0"
             }))
             .unwrap(),
         )
         .unwrap();
         assert_eq!(installed_engine(&state, &launcher, 1), Some(binary.clone()));
+        assert_eq!(
+            compositor_version(&state, &launcher).as_deref(),
+            Some("COSMIC 1.10.0 · renderer 1")
+        );
         assert!(installed_engine(&state, &launcher, 2).is_none());
         let record_path = state.join("cosmic-forge/engine-installation.json");
         let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
@@ -663,6 +687,10 @@ mod engine_tests {
         assert!(installed_engine(&state, &launcher, 3).is_none());
         record["renderer_revision"] = json!(3);
         fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(
+            compositor_version(&state, &launcher).as_deref(),
+            Some("COSMIC 1.10.0 · renderer 3")
+        );
         assert_eq!(installed_engine(&state, &launcher, 3), Some(binary.clone()));
         fs::write(&launcher, b"another compositor").unwrap();
         assert!(installed_engine(&state, &launcher, 0).is_none());

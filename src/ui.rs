@@ -70,6 +70,7 @@ pub struct Forge {
     polled: Instant,
     error: Option<String>,
     about: bool,
+    about_details: String,
     engine_update: bool,
     show_engine_update: bool,
     theme_dirty: bool,
@@ -460,6 +461,7 @@ impl cosmic::Application for Forge {
             polled: Instant::now(),
             error,
             about: false,
+            about_details: String::new(),
             engine_update: false,
             show_engine_update: false,
             theme_dirty: false,
@@ -627,7 +629,7 @@ impl cosmic::Application for Forge {
         self.about.then(|| {
             widget::dialog()
                 .title("COSMIC Forge")
-                .body(format!("Version {VERSION}"))
+                .body(self.about_details.as_str())
                 .control(
                     button::link("https://github.com/motixo/cosmic-forge")
                         .on_press(Message::Repository),
@@ -846,7 +848,20 @@ impl cosmic::Application for Forge {
                     self.report(result);
                 }
             }
-            Message::About(show) => self.about = show,
+            Message::About(show) => {
+                if show {
+                    let compositor = store::installed_compositor_version()
+                        .unwrap_or_else(|| "Not installed".into());
+                    let shaders = packs::installed_revision(&packs::root()).map_or_else(
+                        || "Bundled".into(),
+                        |revision| format!("revision {revision}"),
+                    );
+                    self.about_details = format!(
+                        "Version {VERSION}\nForge compositor: {compositor}\nShader pack: {shaders}"
+                    );
+                }
+                self.about = show;
+            }
             Message::Folder => {
                 let folder = packs::root().join("packs");
                 let result = std::fs::create_dir_all(&folder)

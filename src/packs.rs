@@ -66,6 +66,12 @@ pub fn root() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share").join("cosmic-forge")
 }
 
+pub fn installed_revision(data_root: &Path) -> Option<u64> {
+    let pack =
+        parse(&read(&data_root.join("packs").join(format!("{OFFICIAL}.json"))).ok()?).ok()?;
+    (pack.id == OFFICIAL).then_some(pack.revision)
+}
+
 impl Pack {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.format == 1, "Unsupported effect pack format");

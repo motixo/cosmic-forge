@@ -27,7 +27,9 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             .success()
     );
     let root = temp.path().join("data");
+    assert_eq!(packs::installed_revision(&root), None);
     packs::install(&root, &fs::read(output).unwrap(), true).unwrap();
+    assert_eq!(packs::installed_revision(&root), Some(1));
     let effects = catalog::load(&root.join("effects")).unwrap();
     assert_eq!(
         effects.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
