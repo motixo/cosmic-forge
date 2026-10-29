@@ -33,9 +33,15 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     let effects = catalog::load(&root.join("effects")).unwrap();
     assert_eq!(
         effects.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-        ["frosted", "crystal", "aero", "liquid-glass"]
+        ["frosted", "crystal", "mica", "aero", "liquid-glass"]
     );
     assert!(effects[1..].iter().all(|e| e.shader.is_some()));
+    let mica = effects.iter().find(|e| e.id == "mica").unwrap();
+    assert_eq!(mica.shader.as_ref().unwrap().renderer_revision(), 4);
+    assert_eq!(
+        mica.shader.as_ref().unwrap().backdrop,
+        cosmic_forge::runtime::Backdrop::Wallpaper
+    );
     let liquid = effects.iter().find(|e| e.id == "liquid-glass").unwrap();
     assert_eq!(liquid.shader.as_ref().unwrap().base, "glass");
     assert_eq!(liquid.shader.as_ref().unwrap().renderer_revision(), 2);
@@ -112,19 +118,19 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             .value,
         8.0
     );
-    for (index, key, amount) in [
-        (1, "forge_crystal_color", 61),
-        (2, "aero_color", 27),
-        (3, "forge_liquid_color", 44),
+    for (id, key, amount) in [
+        ("crystal", "forge_crystal_color", 61),
+        ("aero", "aero_color", 27),
+        ("liquid-glass", "forge_liquid_color", 44),
     ] {
-        let effect = &effects[index];
+        let effect = effects.iter().find(|e| e.id == id).unwrap();
         let color = effect.controls.iter().find(|c| c.key == key).unwrap();
         assert_eq!(color.label, "Theme color");
         store.select_effect(effect).unwrap();
         store.set_control(color, &json!(amount)).unwrap();
     }
-    for (index, amount) in [(1, 61), (2, 27), (3, 44)] {
-        let effect = &effects[index];
+    for (id, amount) in [("crystal", 61), ("aero", 27), ("liquid-glass", 44)] {
+        let effect = effects.iter().find(|e| e.id == id).unwrap();
         store.select_effect(effect).unwrap();
         let color = effect
             .controls
