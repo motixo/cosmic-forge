@@ -2,6 +2,13 @@
 
 ### Added
 
+- **Mica in the official shader catalog:** the bundled shader repository now
+  includes Mica's matte wallpaper material, light/dark themes, inactive-window
+  fallback and independent Blur and Wallpaper color controls. Install official
+  shader pack 7 through **Check for updates** to use it.
+- **Official catalog ordering:** the menu follows the order supplied by the
+  official shader pack, placing Mica immediately above Aero. Community effects
+  keep their relative order after the official presets.
 - **About now reports installed component versions:** the Forge app version,
   the installed compositor's COSMIC version and renderer revision, and the
   official shader pack's revision. Bundled shaders and a missing Forge

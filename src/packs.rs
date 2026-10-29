@@ -237,7 +237,15 @@ pub fn merge(
         packs.push(pack.clone());
     }
     let mut ids = HashSet::new();
+    let mut official_order = Vec::new();
     for pack in packs {
+        if pack.id == OFFICIAL {
+            official_order = pack
+                .effects
+                .iter()
+                .map(|effect| effect.id.clone())
+                .collect();
+        }
         for mut effect in pack.effects {
             ensure!(
                 ids.insert(effect.id.clone()),
@@ -257,6 +265,14 @@ pub fn merge(
                 effects.push(effect);
             }
         }
+    }
+    if !official_order.is_empty() {
+        effects.sort_by_key(|effect| {
+            official_order
+                .iter()
+                .position(|id| id == &effect.id)
+                .unwrap_or(official_order.len())
+        });
     }
     Ok(())
 }
