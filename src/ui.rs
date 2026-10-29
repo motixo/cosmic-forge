@@ -9,7 +9,7 @@ use cosmic::{
 use cosmic_forge::{
     APP_ID, VERSION,
     catalog::{self, Control, ControlKind, Effect},
-    engine, lockscreen, mods, packs, panel,
+    engine, packs,
     store::{self, Fingerprint, Store, xdg},
 };
 use serde_json::{Value, json};
@@ -27,25 +27,13 @@ impl CosmicFlags for Flags {
 #[derive(Clone, Copy, Debug)]
 enum Page {
     Effect(usize),
-    Mod(usize),
     Settings,
 }
 #[derive(Clone, Debug)]
 pub enum Message {
     Value(usize, Value),
     Flush,
-    Panel(nav_bar::Id),
-    PanelProfile(usize),
-    PanelMode(usize),
-    PanelColor(widget::color_picker::ColorPickerUpdate),
-    MatchPanelTheme,
-    ModValue(usize, Value),
-    ModPreset,
-    Engine(engine::Component, engine::Action),
-    LockScreen(nav_bar::Id),
-    ChooseLockImage,
-    LockImageImported(Option<Result<std::path::PathBuf, String>>),
-    FollowDesktop,
+    Engine(engine::Action),
     Settings,
     ApplyEffect,
     Reset,
@@ -64,15 +52,13 @@ pub enum Message {
 
 enum TransferEvent {
     Progress(engine::Progress),
-    EngineUpdates(Vec<engine::Component>),
+    EngineUpdate(bool),
     Finished(Result<String, String>),
 }
 
 pub struct Forge {
     core: Core,
     nav: nav_bar::Model,
-    panel_nav: nav_bar::Model,
-    lock_nav: nav_bar::Model,
     effects: Vec<Effect>,
     page: Page,
     settings_return: Page,
@@ -83,7 +69,7 @@ pub struct Forge {
     polled: Instant,
     error: Option<String>,
     about: bool,
-    engine_updates: Vec<engine::Component>,
+    engine_update: bool,
     show_engine_update: bool,
     theme_dirty: bool,
     status: &'static str,
@@ -91,19 +77,7 @@ pub struct Forge {
     transfer: Option<std::sync::mpsc::Receiver<TransferEvent>>,
     engine_progress: Option<engine::Progress>,
     renderer_note: String,
-    engine_component: engine::Component,
-    panel_note: String,
-    panel_revision: u64,
-    greeter_revision: u64,
-    greeter_note: String,
-    importing_image: bool,
-    mods: Vec<mods::Mod>,
     show_updates: bool,
-    panel_names: Vec<String>,
-    panel_index: usize,
-    panel_mode: usize,
-    panel_profile: Option<panel::Profile>,
-    color_picker: widget::color_picker::Model,
     update_note: String,
     checked: Instant,
     catalog_stamp: u64,
@@ -142,28 +116,24 @@ impl Forge {
         }
         self.engine_progress = None;
         self.checked = Instant::now();
-        self.start_transfer("Checking effects, mods and engine…", |sender| {
+        self.start_transfer("Checking shaders and compositor…", |sender| {
             let effects = match packs::update(&packs::root()) {
                 Ok(note) => format!("Effects: {note}"),
                 Err(e) => format!("Effects: {e:#}"),
             };
-            let mods = match mods::update(&mods::root()) {
-                Ok(note) => format!("Mods: {note}"),
-                Err(e) => format!("Mods: {e:#}"),
-            };
-            let engine = match engine::available_updates() {
-                Ok(updates) => {
-                    let note = if updates.is_empty() {
+            let engine = match engine::update_available() {
+                Ok(available) => {
+                    let note = if !available {
                         "Engine: no updates available"
                     } else {
                         "Engine update available · open Settings to update"
                     };
-                    let _ = sender.send(TransferEvent::EngineUpdates(updates));
+                    let _ = sender.send(TransferEvent::EngineUpdate(available));
                     note.to_owned()
                 }
                 Err(e) => format!("Engine: {e:#}"),
             };
-            Ok(format!("{effects}\n{mods}\n{engine}"))
+            Ok(format!("{effects}\n{engine}"))
         });
     }
     fn start_transfer(
@@ -185,27 +155,20 @@ impl Forge {
         });
     }
     fn transfer_note(&mut self, note: String) {
-        if self.engine_progress.is_some() && self.engine_component == engine::Component::Greeter {
-            self.greeter_note = note;
-        } else if self.engine_progress.is_some()
-            && self.engine_component == engine::Component::Panel
-        {
-            self.panel_note = note;
-        } else if self.engine_progress.is_some() {
+        if self.engine_progress.is_some() {
             self.renderer_note = note;
         } else {
             self.update_note = note;
         }
     }
-    fn start_component(&mut self, component: engine::Component, action: engine::Action) {
+    fn start_engine(&mut self, action: engine::Action) {
         if self.transfer.is_some() {
             return;
         }
         self.show_updates = false;
-        self.engine_component = component;
         self.engine_progress = Some(engine::Progress::Checking);
-        self.start_transfer("Checking installed engine…", move |sender| {
-            engine::setup_component(component, action, |progress| {
+        self.start_transfer("Checking installed compositor…", move |sender| {
+            engine::setup(action, |progress| {
                 let _ = sender.send(TransferEvent::Progress(progress));
             })
         });
@@ -290,391 +253,44 @@ impl Forge {
             .unwrap_or_else(|| self.store.value(control))
     }
     fn sync_selection(&mut self) {
-        for model in [&mut self.nav, &mut self.panel_nav, &mut self.lock_nav] {
-            let active = model.active();
-            widget::segmented_button::Selectable::deactivate(model, active);
-        }
         let page = match self.page {
             Page::Settings => self.settings_return,
             page => page,
         };
         match page {
             Page::Effect(index) => self.nav.activate_position(index as u16),
-            Page::Mod(index) => {
-                let section = &self.mods[index].section;
-                let position = self.mods[..index]
-                    .iter()
-                    .filter(|m| m.section == *section)
-                    .count();
-                if section == "panel" {
-                    self.panel_nav.activate_position(position as u16)
-                } else {
-                    self.lock_nav.activate_position(position as u16)
-                }
-            }
             Page::Settings => false,
         };
     }
-    fn reload_panel(&mut self, reset_picker: bool) {
-        let result = (|| -> anyhow::Result<()> {
-            let names = panel::profiles(&self.store)?;
-            if let Some(current) = self.panel_names.get(self.panel_index) {
-                self.panel_index = names.iter().position(|n| n == current).unwrap_or(0);
-            }
-            self.panel_names = names;
-            let profile = self
-                .panel_names
-                .get(self.panel_index)
-                .map(|name| panel::load(&self.store, name))
-                .transpose()?;
-            if reset_picker || profile != self.panel_profile {
-                self.panel_profile = profile;
-                self.reset_panel_picker();
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            self.error = Some(format!("{error:#}"));
-        }
-    }
-    fn reset_panel_picker(&mut self) {
-        let dark = self.panel_mode == 1;
-        let color = self
-            .panel_profile
-            .as_ref()
-            .and_then(|p| p.colors)
-            .and_then(|c| c.get(dark));
-        let rgb = |c: [f32; 3]| iced::Color::from_rgb(c[0], c[1], c[2]);
-        self.color_picker = widget::color_picker::Model::new(
-            "Hex",
-            "RGB",
-            Some(rgb(panel::theme_color(&self.store, dark))),
-            color.map(rgb),
-        );
-    }
-    fn save_panel_color(&mut self, color: Option<[f32; 3]>) {
-        if self.panel_revision > 0
-            && let Some(name) = self.panel_names.get(self.panel_index)
-        {
-            let result = panel::set_color(&mut self.store, name, self.panel_mode == 1, color);
-            if self.report(result) {
-                self.reload_panel(true);
-            }
-        }
-    }
-    fn reload_mods(&mut self) {
-        let result = mods::load(&mods::root());
-        let catalog = match result {
-            Ok(c) => c,
-            Err(e) => {
-                self.error = Some(format!("{e:#}"));
-                return;
-            }
-        };
-        if self.mods == catalog.mods {
-            return;
-        }
-        let remap = |page: Page| match page {
-            Page::Mod(index) => self
-                .mods
-                .get(index)
-                .and_then(|m| catalog.mods.iter().position(|new| new.id == m.id))
-                .map(Page::Mod)
-                .unwrap_or(Page::Effect(0)),
-            page => page,
-        };
-        self.page = remap(self.page);
-        self.settings_return = remap(self.settings_return);
-        self.mods = catalog.mods;
-        self.panel_nav = nav_bar::Model::default();
-        self.lock_nav = nav_bar::Model::default();
-        for (index, m) in self.mods.iter().enumerate() {
-            let model = if m.section == "panel" {
-                &mut self.panel_nav
-            } else {
-                &mut self.lock_nav
-            };
-            model.insert().text(m.name.clone()).data(Page::Mod(index));
-        }
-        self.sync_selection();
-    }
-    fn set_mod_values(&mut self, values: BTreeMap<String, Value>) {
-        if let Page::Mod(index) = self.page
-            && let Some(m) = self.mods.get(index)
-        {
-            let result = if m.section == "panel" && self.panel_revision >= m.engine_revision {
-                self.panel_names.get(self.panel_index).map(|profile| {
-                    panel::apply_controls(&mut self.store, profile, &m.controls, &values)
-                })
-            } else if m.section == "lock_screen" && self.greeter_revision >= m.engine_revision {
-                Some(lockscreen::apply_controls(
-                    &mut self.store,
-                    &m.controls,
-                    &values,
-                ))
-            } else {
-                None
-            };
-            if let Some(result) = result
-                && self.report(result)
-            {
-                self.reload_panel(false);
-            }
-        }
-    }
-    fn engine_component_view(&self, component: engine::Component) -> Element<'_, Message> {
-        let (install_label, restore_label, note) = match component {
-            engine::Component::Compositor => (
-                "Install compositor",
-                "Restore original COSMIC compositor",
-                self.renderer_note.as_str(),
-            ),
-            engine::Component::Greeter => (
-                "Install lock screen",
-                "Restore original COSMIC lock screen",
-                self.greeter_note.as_str(),
-            ),
-            engine::Component::Panel => (
-                "Install panel",
-                "Restore original COSMIC panel",
-                self.panel_note.as_str(),
-            ),
-        };
+    fn compositor_view(&self) -> Element<'_, Message> {
+        let install_label = "Install / update compositor";
+        let restore_label = "Restore original COSMIC compositor";
         let mut install = button::standard(install_label);
         let mut restore = button::standard(restore_label);
         if self.transfer.is_none() {
-            install = install.on_press(Message::Engine(component, engine::Action::Install));
-            restore = restore.on_press(Message::Engine(component, engine::Action::Restore));
+            install = install.on_press(Message::Engine(engine::Action::Install));
+            restore = restore.on_press(Message::Engine(engine::Action::Restore));
         }
         let mut content = widget::column::with_capacity(6)
             .spacing(16)
-            .push(text::heading(component.label()))
+            .push(text::heading("Compositor"))
             .push(install)
             .push(restore);
-        let progress = self
-            .engine_progress
-            .filter(|_| self.engine_component == component);
-        if let Some(progress) = progress {
+        if let Some(progress) = self.engine_progress {
             let mut bar = widget::progress_bar::linear::Linear::new()
                 .width(Length::Fill)
                 .girth(6.0);
             if progress.finished() {
                 bar = bar.progress(1.0);
             }
-            let label = match component {
-                engine::Component::Panel => progress.panel_label(),
-                engine::Component::Greeter => progress.greeter_label(),
-                engine::Component::Compositor => progress.label(),
-            };
             content = content.push(
                 widget::column::with_capacity(2)
                     .spacing(10)
-                    .push(text::body(label))
+                    .push(text::body(progress.label()))
                     .push(bar),
             );
-        } else if !note.is_empty() {
-            content = content.push(text::caption(note));
-        }
-        content.into()
-    }
-    fn panel_view(&self, index: usize) -> Element<'_, Message> {
-        let Some(m) = self.mods.get(index) else {
-            return text::body("No panel mods are available.").into();
-        };
-        let mut content = widget::column::with_capacity(12)
-            .spacing(18)
-            .push(text::title2(m.name.as_str()))
-            .push(text::body(m.description.as_str()))
-            .push(
-                settings::item::builder("Panel profile").control(widget::dropdown(
-                    self.panel_names.as_slice(),
-                    Some(self.panel_index),
-                    Message::PanelProfile,
-                )),
-            );
-        if self.panel_revision < m.engine_revision {
-            return content.push(text::body("Install or update the panel engine in Settings, then sign out and back in to use this mod."))
-                .push(button::suggested("Go to settings").on_press(Message::EngineSettings)).into();
-        }
-        let Some(profile) = &self.panel_profile else {
-            return content
-                .push(text::body("No COSMIC panel profiles are configured."))
-                .into();
-        };
-        for (i, c) in m.controls.iter().enumerate() {
-            match c.kind {
-                mods::Kind::Image => {}
-                mods::Kind::ThemeColor => {
-                    let customized = profile
-                        .colors
-                        .and_then(|c| c.get(self.panel_mode == 1))
-                        .is_some();
-                    content = content
-                        .push(settings::item::builder("Theme").control(widget::dropdown(
-                            &["Light", "Dark"][..],
-                            Some(self.panel_mode),
-                            Message::PanelMode,
-                        )))
-                        .push(
-                            settings::item::builder(c.label.as_str())
-                                .description(if customized {
-                                    "Custom color"
-                                } else {
-                                    "Following COSMIC theme"
-                                })
-                                .control(
-                                    self.color_picker
-                                        .picker_button(Message::PanelColor, None)
-                                        .width(52)
-                                        .height(36),
-                                ),
-                        )
-                        .push(button::standard("Match theme").on_press(Message::MatchPanelTheme));
-                    if self.color_picker.get_is_active() {
-                        content = content.push(
-                            self.color_picker
-                                .builder(Message::PanelColor)
-                                .save_label("Apply")
-                                .cancel_label("Cancel")
-                                .build("Recent colors", "Copy to clipboard", "Copied"),
-                        );
-                    }
-                    content = content.push(text::caption("Light and dark colors switch with your desktop theme, even while Forge is closed."));
-                }
-                mods::Kind::Boolean => {
-                    let value = panel::control_value(&self.store, &profile.name, c)
-                        .ok()
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    content = content.push(
-                        settings::item::builder(c.label.as_str())
-                            .description(c.description.as_str())
-                            .control(
-                                widget::toggler(value)
-                                    .on_toggle(move |v| Message::ModValue(i, json!(v))),
-                            ),
-                    );
-                }
-                mods::Kind::Integer => {
-                    let value = panel::control_value(&self.store, &profile.name, c)
-                        .ok()
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(i64::from(c.min)) as i32;
-                    content = content
-                        .push(
-                            settings::item::builder(c.label.as_str())
-                                .description(c.description.as_str())
-                                .control(widget::spin_button(
-                                    format!("{value}{}", c.unit),
-                                    c.label.clone(),
-                                    value,
-                                    1,
-                                    c.min,
-                                    c.max,
-                                    move |v| Message::ModValue(i, json!(v)),
-                                )),
-                        )
-                        .push(
-                            widget::slider(c.min..=c.max, value, move |v| {
-                                Message::ModValue(i, json!(v))
-                            })
-                            .step(1),
-                        );
-                }
-            }
-        }
-        if !m.preset.is_empty() {
-            content = content.push(button::standard("Apply preset").on_press(Message::ModPreset));
-        }
-        content.into()
-    }
-    fn lockscreen_view(&self, index: usize) -> Element<'_, Message> {
-        let m = &self.mods[index];
-        let mut content = widget::column::with_capacity(8)
-            .spacing(18)
-            .push(text::title2(m.name.as_str()))
-            .push(text::body(m.description.as_str()));
-        if self.greeter_revision < m.engine_revision {
-            return content
-                .push(text::body("Install or update the lock screen engine in Settings, then sign out and back in to use this mod."))
-                .push(button::suggested("Go to settings").on_press(Message::EngineSettings)).into();
-        }
-        let config = match lockscreen::load(&self.store) {
-            Ok(config) => config,
-            Err(error) => return content.push(text::body(format!("{error:#}"))).into(),
-        };
-        for (index, c) in m.controls.iter().enumerate() {
-            match c.kind {
-                mods::Kind::Image => {
-                    if config.wallpaper.is_none() {
-                        content = content.push(text::body("Using desktop wallpaper"));
-                    }
-                    let mut choose = button::suggested("Choose image");
-                    let mut follow = button::standard("Use desktop wallpaper");
-                    if !self.importing_image {
-                        choose = choose.on_press(Message::ChooseLockImage);
-                        if config.wallpaper.is_some() {
-                            follow = follow.on_press(Message::FollowDesktop);
-                        }
-                    }
-                    content = content.push(
-                        widget::row::with_capacity(2)
-                            .spacing(12)
-                            .push(choose)
-                            .push(follow),
-                    );
-                    if self.importing_image {
-                        content = content.push(text::caption("Importing image…"));
-                    }
-                    if let Some(path) = &config.wallpaper {
-                        content = content.push(
-                            widget::image(path.clone())
-                                .name("Selected lock screen wallpaper")
-                                .width(Length::Fill)
-                                .height(220)
-                                .content_fit(iced::ContentFit::Contain)
-                                .border_radius(8),
-                        );
-                    }
-                }
-                mods::Kind::Boolean => {
-                    let value = lockscreen::control_value(&self.store, c)
-                        .ok()
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    content = content.push(
-                        settings::item::builder(c.label.as_str())
-                            .description(c.description.as_str())
-                            .control(
-                                widget::toggler(value)
-                                    .on_toggle(move |v| Message::ModValue(index, json!(v))),
-                            ),
-                    );
-                }
-                mods::Kind::Integer => {
-                    let value = lockscreen::control_value(&self.store, c)
-                        .ok()
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(i64::from(c.min)) as i32;
-                    content = content.push(
-                        settings::item::builder(c.label.as_str())
-                            .description(c.description.as_str())
-                            .control(widget::spin_button(
-                                format!("{value}{}", c.unit),
-                                c.label.clone(),
-                                value,
-                                1,
-                                c.min,
-                                c.max,
-                                move |v| Message::ModValue(index, json!(v)),
-                            )),
-                    );
-                }
-                mods::Kind::ThemeColor => {}
-            }
-        }
-        if !m.preset.is_empty() {
-            content = content.push(button::standard("Apply preset").on_press(Message::ModPreset));
+        } else if !self.renderer_note.is_empty() {
+            content = content.push(text::caption(self.renderer_note.as_str()));
         }
         content.into()
     }
@@ -782,10 +398,8 @@ impl Forge {
                 settings::section().title("Patches").add(
                     widget::column::with_capacity(4)
                         .spacing(24)
-                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install prebuilt binaries, then sign out and back in."))
-                        .push(self.engine_component_view(engine::Component::Compositor))
-                        .push(self.engine_component_view(engine::Component::Panel))
-                        .push(self.engine_component_view(engine::Component::Greeter)),
+                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install the prebuilt compositor, then sign out and back in."))
+                        .push(self.compositor_view()),
                 ),
             )
             .into()
@@ -833,15 +447,10 @@ impl cosmic::Application for Forge {
                 .data(Page::Effect(index));
         }
         nav.activate_position(index as u16);
-        let panel_nav = nav_bar::Model::default();
-
-        let lock_nav = nav_bar::Model::default();
         let (status, engine_note) = store::engine_status();
         let mut app = Self {
             core,
             nav,
-            panel_nav,
-            lock_nav,
             effects,
             page: Page::Effect(index),
             settings_return: Page::Effect(index),
@@ -852,7 +461,7 @@ impl cosmic::Application for Forge {
             polled: Instant::now(),
             error,
             about: false,
-            engine_updates: Vec::new(),
+            engine_update: false,
             show_engine_update: false,
             theme_dirty: false,
             status,
@@ -860,27 +469,13 @@ impl cosmic::Application for Forge {
             transfer: None,
             engine_progress: None,
             renderer_note: String::new(),
-            engine_component: engine::Component::Compositor,
-            panel_note: String::new(),
-            panel_revision: panel::installed_revision().unwrap_or(0),
-            greeter_revision: engine::installed_revision(engine::Component::Greeter).unwrap_or(0),
-            greeter_note: String::new(),
-            importing_image: false,
-            mods: Vec::new(),
             show_updates: false,
-            panel_names: Vec::new(),
-            panel_index: 0,
-            panel_mode: usize::from(store::Store::default().dark()),
-            panel_profile: None,
-            color_picker: widget::color_picker::Model::new("Hex", "RGB", None, None),
             update_note: String::new(),
             checked: Instant::now(),
             catalog_stamp: packs::fingerprint(&packs::root()),
         };
-        app.reload_mods();
-        app.reload_panel(true);
         app.set_header_title("COSMIC Forge".into());
-        if packs::due(&packs::root()) || mods::due(&mods::root()) {
+        if packs::due(&packs::root()) {
             app.check_updates();
         }
         let task = app.set_window_title("COSMIC Forge".into(), app.core.main_window_id().unwrap());
@@ -912,17 +507,12 @@ impl cosmic::Application for Forge {
                 )
                 .into()
         }
-        let groups = widget::column::with_capacity(3)
-            .spacing(16)
-            .push(group("Shaders", &self.nav, |id| {
-                cosmic::Action::Cosmic(cosmic::app::Action::NavBar(id))
-            }))
-            .push(group("Panel & Dock", &self.panel_nav, |id| {
-                cosmic::Action::App(Message::Panel(id))
-            }))
-            .push(group("Lock screen", &self.lock_nav, |id| {
-                cosmic::Action::App(Message::LockScreen(id))
-            }));
+        let groups =
+            widget::column::with_capacity(1)
+                .spacing(16)
+                .push(group("Shaders", &self.nav, |id| {
+                    cosmic::Action::Cosmic(cosmic::app::Action::NavBar(id))
+                }));
         let mut sidebar = widget::container(widget::scrollable(groups).height(Length::Fill))
             .padding(8)
             .width(Length::Shrink)
@@ -969,8 +559,6 @@ impl cosmic::Application for Forge {
     fn view(&self) -> Element<'_, Message> {
         let content = match self.page {
             Page::Effect(i) => self.effect_view(i),
-            Page::Mod(index) if self.mods[index].section == "panel" => self.panel_view(index),
-            Page::Mod(index) => self.lockscreen_view(index),
             Page::Settings => self.settings_view(),
         };
         widget::scrollable(
@@ -995,7 +583,7 @@ impl cosmic::Application for Forge {
                     .into(),
             );
         }
-        if self.error.is_none() && !self.engine_updates.is_empty() && !self.show_engine_update {
+        if self.error.is_none() && self.engine_update && !self.show_engine_update {
             return Some(
                 widget::container(
                     widget::row::with_capacity(2)
@@ -1044,14 +632,8 @@ impl cosmic::Application for Forge {
         )
     }
     fn dialog(&self) -> Option<Element<'_, Message>> {
-        if self.show_engine_update && !self.engine_updates.is_empty() {
-            let components = self
-                .engine_updates
-                .iter()
-                .map(|c| c.label())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Some(widget::dialog().title("Engine update available").body(format!("An engine update is available for {components}. Install / update it in Settings, then sign out and back in to activate it."))
+        if self.show_engine_update && self.engine_update {
+            return Some(widget::dialog().title("Engine update available").body("A compositor update is available. Install / update it in Settings, then sign out and back in to activate it.")
                 .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
                 .secondary_action(button::standard("Later").on_press(Message::DismissEngineUpdate)).into());
         }
@@ -1148,9 +730,9 @@ impl cosmic::Application for Forge {
                     .unwrap_or_default();
                 for event in events {
                     let result = match event {
-                        TransferEvent::EngineUpdates(updates) => {
-                            self.show_engine_update = self.show_updates && !updates.is_empty();
-                            self.engine_updates = updates;
+                        TransferEvent::EngineUpdate(available) => {
+                            self.show_engine_update = self.show_updates && available;
+                            self.engine_update = available;
                             continue;
                         }
                         TransferEvent::Progress(progress) => {
@@ -1166,14 +748,9 @@ impl cosmic::Application for Forge {
                     match result {
                         Ok(note) => {
                             if self.engine_progress.is_some() {
-                                self.engine_updates.retain(|c| *c != self.engine_component);
+                                self.engine_update = false;
                             }
                             self.transfer_note(note);
-                            self.panel_revision = panel::installed_revision().unwrap_or(0);
-                            self.greeter_revision =
-                                engine::installed_revision(engine::Component::Greeter).unwrap_or(0);
-                            self.reload_panel(true);
-                            self.reload_mods();
                             (self.status, self.engine_note) = store::engine_status();
                             if let Err(e) = self.reload_effects() {
                                 self.error = Some(format!("{e:#}"));
@@ -1222,10 +799,6 @@ impl cosmic::Application for Forge {
                         self.sync_selection();
                         self.theme_dirty |= theme_changed;
                     }
-                    self.reload_mods();
-                    if !self.color_picker.get_is_active() {
-                        self.reload_panel(false);
-                    }
                     self.polled = Instant::now();
                 }
             }
@@ -1241,124 +814,7 @@ impl cosmic::Application for Forge {
                     self.sync_selection();
                 }
             }
-            Message::Panel(id) => {
-                if self.flush()
-                    && let Some(page) = self.panel_nav.data::<Page>(id).copied()
-                {
-                    self.page = page;
-                    self.reload_panel(true);
-                    self.sync_selection();
-                }
-            }
-            Message::LockScreen(id) => {
-                if self.flush()
-                    && let Some(page) = self.lock_nav.data::<Page>(id).copied()
-                {
-                    self.page = page;
-                    self.sync_selection();
-                }
-            }
-            Message::ChooseLockImage => {
-                if self.greeter_revision > 0 && !self.importing_image {
-                    self.importing_image = true;
-                    return cosmic::task::future(async {
-                        use cosmic::dialog::file_chooser;
-                        let files = file_chooser::open::Dialog::new()
-                            .title("Choose lock screen wallpaper")
-                            .filter(
-                                file_chooser::FileFilter::new("Images")
-                                    .glob("*.png")
-                                    .glob("*.jpg")
-                                    .glob("*.jpeg")
-                                    .glob("*.webp"),
-                            )
-                            .open_file()
-                            .await;
-                        let source = match files {
-                            Ok(files) => files.url().to_file_path().ok(),
-                            Err(file_chooser::Error::Cancelled) => {
-                                return Message::LockImageImported(None);
-                            }
-                            Err(e) => return Message::LockImageImported(Some(Err(e.to_string()))),
-                        };
-                        let Some(source) = source else {
-                            return Message::LockImageImported(Some(Err(
-                                "Choose a local image".into()
-                            )));
-                        };
-                        let (tx, rx) = cosmic::iced::futures::channel::oneshot::channel();
-                        std::thread::spawn(move || {
-                            let _ = tx.send(
-                                lockscreen::import_image(&source).map_err(|e| format!("{e:#}")),
-                            );
-                        });
-                        Message::LockImageImported(Some(
-                            rx.await.unwrap_or_else(|e| Err(e.to_string())),
-                        ))
-                    });
-                }
-            }
-            Message::LockImageImported(result) => {
-                self.importing_image = false;
-                if let Some(result) = result {
-                    let result = result.map_err(anyhow::Error::msg).and_then(|path| {
-                        anyhow::ensure!(
-                            self.greeter_revision > 0,
-                            "Install the lock screen engine in Settings first"
-                        );
-                        lockscreen::set_wallpaper(&mut self.store, Some(path))
-                    });
-                    self.report(result);
-                }
-            }
-            Message::FollowDesktop => {
-                if self.greeter_revision > 0 && !self.importing_image {
-                    let result = lockscreen::set_wallpaper(&mut self.store, None);
-                    self.report(result);
-                }
-            }
-            Message::PanelProfile(index) => {
-                if index < self.panel_names.len() {
-                    self.panel_index = index;
-                    self.reload_panel(true);
-                }
-            }
-            Message::PanelMode(index) => {
-                if index < 2 {
-                    self.panel_mode = index;
-                    self.reload_panel(true);
-                }
-            }
-            Message::PanelColor(update) => {
-                use widget::color_picker::ColorPickerUpdate as U;
-                // libcosmic also emits this on canvas and hue slider releases.
-                if matches!(update, U::ActionFinished) {
-                    return Task::none();
-                }
-                let reset = matches!(update, U::Reset);
-                let apply = matches!(update, U::AppliedColor);
-                let task = self.color_picker.update::<Message>(update);
-                if reset {
-                    self.save_panel_color(None);
-                } else if apply && let Some(c) = self.color_picker.get_applied_color() {
-                    self.save_panel_color(Some([c.r, c.g, c.b]));
-                }
-                return task.map(cosmic::Action::App);
-            }
-            Message::MatchPanelTheme => self.save_panel_color(None),
-            Message::ModValue(index, value) => {
-                if let Page::Mod(m) = self.page
-                    && let Some(c) = self.mods[m].controls.get(index)
-                {
-                    self.set_mod_values(BTreeMap::from([(c.key.clone(), value)]));
-                }
-            }
-            Message::ModPreset => {
-                if let Page::Mod(m) = self.page {
-                    self.set_mod_values(self.mods[m].preset.clone());
-                }
-            }
-            Message::Engine(component, action) => self.start_component(component, action),
+            Message::Engine(action) => self.start_engine(action),
             Message::ApplyEffect => {
                 if self.flush()
                     && let Page::Effect(index) = self.page

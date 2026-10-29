@@ -17,16 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class Session:
 
-    def __init__(self, binary, path=None, with_engine=True, with_panel=False, with_greeter=False):
+    def __init__(self, binary, path=None, with_engine=True):
         self.app = self.xvfb = self.log = None
         self.display = None
         try:
-            self.start(binary, path, with_engine, with_panel, with_greeter)
+            self.start(binary, path, with_engine)
         except BaseException:
             self.close()
             raise
 
-    def start(self, binary, path=None, with_engine=True, with_panel=False, with_greeter=False):
+    def start(self, binary, path=None, with_engine=True):
         self.path = path or ROOT / 'build/qa-forge-native'
         self.path.mkdir(parents=True, exist_ok=True)
         (self.path / 'screenshots').mkdir(exist_ok=True)
@@ -46,8 +46,6 @@ class Session:
         packs = self.path / 'data/cosmic-forge'
         packs.mkdir(parents=True)
         (packs / 'last-check').write_text(str(int(time.time())))
-        (packs / 'mods').mkdir()
-        (packs / 'mods/last-check').write_text(str(int(time.time())))
         self.comp = self.config / 'cosmic/com.system76.CosmicComp/v1'
         self.comp.mkdir(parents=True)
         self.put('glass_effect', '"aero"' if with_engine else '"frosted"')
@@ -71,53 +69,6 @@ class Session:
             (state / 'engine-installation.json').write_text(json.dumps({
                 'abi': 1, 'destination': str(destination), 'launcher': str(launcher),
                 'launcher_sha256': hashlib.sha256(launcher.read_bytes()).hexdigest(),
-            }))
-        if with_panel:
-            import sys
-            sys.path.insert(0, str(ROOT / 'engine'))
-            from platforms import package_manager, package_query
-            manager = package_manager()
-            package = subprocess.check_output(package_query(manager, 'cosmic-panel'), text=True).strip()
-            profile = self.config / 'cosmic/com.system76.CosmicPanel.Dock/v1'
-            profile.mkdir(parents=True)
-            (profile / 'anchor_gap').write_text('true\n')
-            launcher = home / '.local/bin/cosmic-panel'
-            launcher.parent.mkdir(parents=True, exist_ok=True)
-            launcher.write_bytes(b'#!/bin/sh\n# Private UI panel fixture\nexit 0\n')
-            destination = self.path / 'data/cosmic-forge/panel/versions/0123456789abcdef'
-            destination.mkdir(parents=True)
-            binary_fixture = destination / 'cosmic-panel'
-            binary_fixture.write_bytes(b'\x7fELFforge-panel-engine-v1 UI fixture')
-            binary_fixture.chmod(0o755)
-            state = self.path / 'state/cosmic-forge'
-            state.mkdir(parents=True, exist_ok=True)
-            (state / 'panel-installation.json').write_text(json.dumps({
-                'abi': 1, 'revision': 1, 'destination': str(destination), 'launcher': str(launcher),
-                'launcher_sha256': hashlib.sha256(launcher.read_bytes()).hexdigest(),
-                'binary_sha256': hashlib.sha256(binary_fixture.read_bytes()).hexdigest(),
-                'package_manager': manager, 'packages': {'cosmic-panel': package},
-            }))
-        if with_greeter:
-            import sys
-            sys.path.insert(0, str(ROOT / 'engine'))
-            from platforms import package_manager, package_query
-            manager = package_manager()
-            package = subprocess.check_output(package_query(manager, 'cosmic-greeter'), text=True).strip()
-            launcher = home / '.local/bin/cosmic-greeter'
-            launcher.parent.mkdir(parents=True, exist_ok=True)
-            launcher.write_bytes(b'#!/bin/sh\n# Private UI locker fixture\nexit 0\n')
-            destination = self.path / 'data/cosmic-forge/greeter/versions/0123456789abcdef'
-            destination.mkdir(parents=True)
-            binary_fixture = destination / 'cosmic-greeter'
-            binary_fixture.write_bytes(b'\x7fELFforge-lockscreen-engine-v1 UI fixture')
-            binary_fixture.chmod(0o755)
-            state = self.path / 'state/cosmic-forge'
-            state.mkdir(parents=True, exist_ok=True)
-            (state / 'greeter-installation.json').write_text(json.dumps({
-                'abi': 1, 'revision': 1, 'destination': str(destination), 'launcher': str(launcher),
-                'launcher_sha256': hashlib.sha256(launcher.read_bytes()).hexdigest(),
-                'binary_sha256': hashlib.sha256(binary_fixture.read_bytes()).hexdigest(),
-                'package_manager': manager, 'packages': {'cosmic-greeter': package},
             }))
         self.log = (self.path / 'app.log').open('w')
         self.xvfb = subprocess.Popen(['Xvfb', '-displayfd', '1', '-screen', '0', '1100x1000x24', '-nolisten', 'tcp', '-ac'], stdout=subprocess.PIPE, stderr=self.log, text=True)

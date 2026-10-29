@@ -126,138 +126,27 @@ pub fn prepare_from_release(
     cache_files(&bundle.files, cache, &hash)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Component {
-    Compositor,
-    Panel,
-    Greeter,
-}
-
-impl Component {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Compositor => "Compositor",
-            Self::Panel => "Panel & Dock",
-            Self::Greeter => "Lock screen",
-        }
-    }
-    fn name(self) -> &'static str {
-        match self {
-            Self::Compositor => "compositor",
-            Self::Panel => "panel",
-            Self::Greeter => "greeter",
-        }
-    }
-    fn record(self) -> &'static str {
-        match self {
-            Self::Compositor => "engine-installation.json",
-            Self::Panel => "panel-installation.json",
-            Self::Greeter => "greeter-installation.json",
-        }
-    }
-}
-pub fn installed_revision(component: Component) -> Option<u64> {
-    use std::os::unix::fs::PermissionsExt;
-    let program = format!("cosmic-{}", component.name());
-    let check = || -> Option<u64> {
-        let data = xdg("XDG_DATA_HOME", ".local/share")
-            .join(format!("cosmic-forge/{}/versions", component.name()));
-        let launcher = PathBuf::from(std::env::var_os("HOME")?)
-            .join(".local/bin")
-            .join(&program);
-        let record: serde_json::Value = serde_json::from_slice(
-            &fs::read(
-                xdg("XDG_STATE_HOME", ".local/state")
-                    .join("cosmic-forge")
-                    .join(component.record()),
-            )
-            .ok()?,
-        )
-        .ok()?;
-        if record["abi"] != 1
-            || record["revision"].as_u64()? < 1
-            || record["launcher"].as_str()? != launcher.to_str()?
-            || launcher.is_symlink()
-        {
-            return None;
-        }
-        let destination = PathBuf::from(record["destination"].as_str()?);
-        if destination.parent()? != data || destination.file_name()?.len() != 16 {
-            return None;
-        }
-        let binary = destination.join(&program);
-        if destination.is_symlink()
-            || binary.is_symlink()
-            || fs::metadata(&binary).ok()?.permissions().mode() & 0o111 == 0
-        {
-            return None;
-        }
-        let manager = record["package_manager"].as_str()?;
-        let args: &[&str] = match manager {
-            "pacman" => &["-Q", &program],
-            "rpm" => &[
-                "-q",
-                "--qf",
-                "%{NAME} %{EPOCHNUM}:%{VERSION}-%{RELEASE}",
-                &program,
-            ],
-            "dpkg-query" => &[
-                "-W",
-                "-f=${Package} ${Version} ${db:Status-Status}",
-                &program,
-            ],
-            _ => return None,
-        };
-        let output = Command::new(manager).args(args).output().ok()?;
-        if !output.status.success()
-            || String::from_utf8(output.stdout).ok()?.trim()
-                != record["packages"][&program].as_str()?
-        {
-            return None;
-        }
-        let hash = |p: &Path| {
-            fs::read(p).ok().map(|b| {
-                Sha256::digest(b)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            })
-        };
-        (hash(&launcher)?.as_str() == record["launcher_sha256"].as_str()?
-            && hash(&binary)?.as_str() == record["binary_sha256"].as_str()?)
-        .then_some(record["revision"].as_u64()?)
-    };
-    check()
-}
-
 fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
 }
-fn receipt(component: Component, bundle: &str, record: &[u8]) -> serde_json::Value {
-    serde_json::json!({"component":component.name(),"bundle_sha256":bundle,"installation_sha256":hash(record)})
+fn receipt(bundle: &str, record: &[u8]) -> serde_json::Value {
+    serde_json::json!({"component":"compositor","bundle_sha256":bundle,"installation_sha256":hash(record)})
 }
-fn updates_for(state: &std::path::Path, bundle: &str) -> Result<Vec<Component>> {
-    let mut updates = Vec::new();
-    for component in [Component::Compositor, Component::Panel, Component::Greeter] {
-        let record = state.join(component.record());
-        if !record.exists() {
-            continue;
-        }
-        let bytes = fs::read(&record)?;
-        let saved: Option<serde_json::Value> =
-            fs::read(state.join(format!("engine-{}-receipt.json", component.name())))
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok());
-        if saved.as_ref() != Some(&receipt(component, bundle, &bytes)) {
-            updates.push(component);
-        }
+fn update_needed(state: &Path, bundle: &str) -> Result<bool> {
+    let record = state.join("engine-installation.json");
+    if !record.exists() {
+        return Ok(false);
     }
-    Ok(updates)
+    let bytes = fs::read(record)?;
+    let saved: Option<serde_json::Value> = fs::read(state.join("engine-compositor-receipt.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    Ok(saved.as_ref() != Some(&receipt(bundle, &bytes)))
 }
-pub fn available_updates() -> Result<Vec<Component>> {
+pub fn update_available() -> Result<bool> {
     let (status, metadata) = crate::packs::download(&format!(
         "https://api.github.com/repos/{REPOSITORY}/releases/latest"
     ))?;
@@ -268,27 +157,26 @@ pub fn available_updates() -> Result<Vec<Component>> {
         ensure!(status == 200, "The engine package is unavailable");
         Ok(bytes)
     })?;
-    updates_for(
+    update_needed(
         &xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge"),
         root.file_name()
             .and_then(|v| v.to_str())
             .context("Missing engine package hash")?,
     )
 }
-fn save_receipt(component: Component, root: &std::path::Path) -> Result<()> {
+fn save_receipt(root: &std::path::Path) -> Result<()> {
     let state = xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge");
-    let record = state.join(component.record());
+    let record = state.join("engine-installation.json");
     if !record.exists() {
         return Ok(());
     }
     let value = receipt(
-        component,
         root.file_name()
             .and_then(|v| v.to_str())
             .context("Missing engine package hash")?,
         &fs::read(record)?,
     );
-    let path = state.join(format!("engine-{}-receipt.json", component.name()));
+    let path = state.join("engine-compositor-receipt.json");
     ensure!(!path.is_symlink(), "Preserved a replaced engine receipt");
     let mut file = tempfile::NamedTempFile::new_in(state)?;
     file.write_all(&serde_json::to_vec(&value)?)?;
@@ -345,70 +233,18 @@ impl Progress {
             Self::AlreadyInstalled => "This renderer version is already installed",
         }
     }
-    pub fn panel_label(self) -> &'static str {
-        match self {
-            Self::Checking => "Checking installed panel…",
-            Self::Downloading => "Downloading the panel engine package…",
-            Self::DownloadingBinary => "Downloading the prebuilt panel…",
-            Self::Preparing => "Downloading and patching panel source…",
-            Self::Building => "Compiling the panel engine…",
-            Self::Installing => "Installing the panel engine…",
-            Self::Restoring => "Restoring the original COSMIC panel…",
-            Self::Complete => "Finished · sign out and back in to activate",
-            Self::AlreadyInstalled => "This panel engine version is already installed",
-        }
-    }
-    pub fn greeter_label(self) -> &'static str {
-        match self {
-            Self::Checking => "Checking installed lock screen…",
-            Self::Downloading => "Downloading the lock screen engine package…",
-            Self::DownloadingBinary => "Downloading the prebuilt lock screen…",
-            Self::Preparing => "Downloading and patching lock screen source…",
-            Self::Building => "Compiling the lock screen engine…",
-            Self::Installing => "Installing the lock screen engine…",
-            Self::Restoring => "Restoring the original COSMIC lock screen…",
-            Self::Complete => "Finished · sign out and back in to activate",
-            Self::AlreadyInstalled => "This lock screen engine version is already installed",
-        }
-    }
     pub fn finished(self) -> bool {
         matches!(self, Self::Complete | Self::AlreadyInstalled)
     }
 }
 
-pub fn setup(action: Action, progress: impl FnMut(Progress)) -> Result<String> {
-    setup_component(Component::Compositor, action, progress)
-}
-
-pub fn setup_component(
-    component: Component,
-    action: Action,
-    mut progress: impl FnMut(Progress),
-) -> Result<String> {
+pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<String> {
     let restore = action == Action::Restore;
     let mut release_tag = None;
     progress(Progress::Checking);
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
     let root = if restore {
-        let mut files = std::collections::BTreeMap::from([("recovery.py".into(), RECOVERY.into())]);
-        if component == Component::Panel {
-            files.insert("panel/__init__.py".into(), "".into());
-            files.insert(
-                "panel/recovery.py".into(),
-                include_str!("../engine/panel/recovery.py").into(),
-            );
-        }
-        if component == Component::Greeter {
-            files.insert("greeter/__init__.py".into(), "".into());
-            files.insert(
-                "greeter/recovery.py".into(),
-                include_str!("../engine/greeter/recovery.py").into(),
-            );
-            files.insert(
-                "platforms.py".into(),
-                include_str!("../engine/platforms.py").into(),
-            );
-        }
+        let files = std::collections::BTreeMap::from([("recovery.py".into(), RECOVERY.into())]);
         let hash = Sha256::digest(serde_json::to_vec(&files)?)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -431,45 +267,16 @@ pub fn setup_component(
             Ok(bytes)
         })?
     };
-    let log_path: PathBuf =
-        xdg("XDG_STATE_HOME", ".local/state").join(if component == Component::Panel {
-            "cosmic-forge/panel-build.log"
-        } else if component == Component::Greeter {
-            "cosmic-forge/greeter-build.log"
-        } else {
-            "cosmic-forge/engine-build.log"
-        });
+    let log_path = xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge/engine-build.log");
     fs::create_dir_all(log_path.parent().unwrap())?;
     let mut log = fs::File::create(&log_path)?;
     let mut command = Command::new("python3");
     command
-        .arg(root.join(if restore && component == Component::Panel {
-            "panel/recovery.py"
-        } else if restore && component == Component::Greeter {
-            "greeter/recovery.py"
-        } else if restore {
-            "recovery.py"
-        } else {
-            "install.py"
-        }))
+        .arg(root.join(if restore { "recovery.py" } else { "install.py" }))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?);
     if !restore {
-        if component == Component::Panel {
-            ensure!(
-                root.join("panel/install.py").is_file(),
-                "Update the Forge engine release to add panel support"
-            );
-            command.args(["--component", "panel"]);
-        }
-        if component == Component::Greeter {
-            ensure!(
-                root.join("greeter/install.py").is_file(),
-                "Update the Forge engine release to add lock screen support"
-            );
-            command.args(["--component", "greeter"]);
-        }
         if let Some(tag) = release_tag {
             command.args(["--release-tag", &tag]);
         }
@@ -517,27 +324,7 @@ pub fn setup_component(
         log_path.display()
     );
     if !restore {
-        save_receipt(component, &root)?;
-    }
-    if component == Component::Greeter {
-        return Ok(if last == Progress::AlreadyInstalled {
-            "The matching lock screen engine is already installed."
-        } else if restore {
-            "Original COSMIC lock screen restored. Sign out and back in to activate it."
-        } else {
-            "Lock screen engine installed. Sign out and back in to activate it."
-        }
-        .into());
-    }
-    if component == Component::Panel {
-        return Ok(if last == Progress::AlreadyInstalled {
-            "The matching panel engine is already installed."
-        } else if restore {
-            "Original COSMIC panel restored. Sign out and back in to activate it."
-        } else {
-            "Panel engine installed. Sign out and back in to activate it."
-        }
-        .into());
+        save_receipt(&root)?;
     }
     Ok(if last == Progress::AlreadyInstalled {
         "The matching Forge glass renderer is already installed. No rebuild or reinstall needed."
@@ -552,37 +339,44 @@ pub fn setup_component(
 #[cfg(test)]
 mod update_tests {
     use super::*;
+
     #[test]
-    fn engine_updates_follow_bundle_and_installation_hashes_even_with_the_same_tag() {
+    fn compositor_updates_preserve_and_ignore_legacy_mod_installations() {
         let tmp = tempfile::tempdir().unwrap();
         let state = tmp.path();
-        assert!(updates_for(state, "bundle-a").unwrap().is_empty());
+        let legacy = [
+            "panel-installation.json",
+            "greeter-installation.json",
+            "engine-panel-receipt.json",
+            "engine-greeter-receipt.json",
+        ];
+        for name in legacy {
+            fs::write(state.join(name), "preserved legacy data").unwrap();
+        }
+        assert!(!update_needed(state, "bundle-a").unwrap());
         let record = b"installed compositor";
-        fs::write(state.join(Component::Compositor.record()), record).unwrap();
-        assert_eq!(
-            updates_for(state, "bundle-a").unwrap(),
-            vec![Component::Compositor]
-        );
+        fs::write(state.join("engine-installation.json"), record).unwrap();
+        assert!(update_needed(state, "bundle-a").unwrap());
         fs::write(
             state.join("engine-compositor-receipt.json"),
-            serde_json::to_vec(&receipt(Component::Compositor, "bundle-a", record)).unwrap(),
+            serde_json::to_vec(&receipt("bundle-a", record)).unwrap(),
         )
         .unwrap();
-        assert!(updates_for(state, "bundle-a").unwrap().is_empty());
-        assert_eq!(
-            updates_for(state, "bundle-b").unwrap(),
-            vec![Component::Compositor]
-        );
+        assert!(!update_needed(state, "bundle-a").unwrap());
+        assert!(update_needed(state, "bundle-b").unwrap());
         fs::write(
-            state.join(Component::Compositor.record()),
+            state.join("engine-installation.json"),
             b"changed installation",
         )
         .unwrap();
-        assert_eq!(
-            updates_for(state, "bundle-a").unwrap(),
-            vec![Component::Compositor]
-        );
-        fs::remove_file(state.join(Component::Compositor.record())).unwrap();
-        assert!(updates_for(state, "bundle-b").unwrap().is_empty());
+        assert!(update_needed(state, "bundle-a").unwrap());
+        fs::remove_file(state.join("engine-installation.json")).unwrap();
+        assert!(!update_needed(state, "bundle-b").unwrap());
+        for name in legacy {
+            assert_eq!(
+                fs::read_to_string(state.join(name)).unwrap(),
+                "preserved legacy data"
+            );
+        }
     }
 }

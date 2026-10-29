@@ -85,19 +85,6 @@ def main():
             assert before == {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns) for p in paths}
             text = log.read_text()
             assert 'FORGE_PROGRESS:building' not in text and 'FORGE_PROGRESS:installing' not in text
-            log.unlink()
-            session.scroll_to_top()
-            session.click(600, 514)
-            deadline = time.monotonic() + 100
-            while time.monotonic() < deadline:
-                if log.exists() and 'FORGE_PROGRESS:already_installed' in log.read_text():
-                    break
-                time.sleep(0.2)
-            else:
-                raise AssertionError('Build did not reuse the matching compositor')
-            time.sleep(0.5)
-            assert before == {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns) for p in paths}
-            assert 'FORGE_PROGRESS:building' not in log.read_text()
             recovery = state / 'engine-previous-compositor'
             engine = Path(record['destination']) / 'cosmic-comp'
             original = Path('/usr/bin/cosmic-comp')
