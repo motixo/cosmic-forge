@@ -50,9 +50,8 @@ pub enum Message {
     Exit,
 }
 
-enum TransferEvent {
+enum EngineEvent {
     Progress(engine::Progress),
-    EngineUpdate(bool),
     Finished(Result<String, String>),
 }
 
@@ -74,7 +73,8 @@ pub struct Forge {
     theme_dirty: bool,
     status: &'static str,
     engine_note: Option<&'static str>,
-    transfer: Option<std::sync::mpsc::Receiver<TransferEvent>>,
+    updates: Option<std::sync::mpsc::Receiver<(String, Option<bool>)>>,
+    engine_transfer: Option<std::sync::mpsc::Receiver<EngineEvent>>,
     engine_progress: Option<engine::Progress>,
     renderer_note: String,
     show_updates: bool,
@@ -111,66 +111,50 @@ impl Forge {
         self.reload_effects()
     }
     fn check_updates(&mut self) {
-        if self.transfer.is_some() {
+        if self.updates.is_some() || self.engine_transfer.is_some() {
             return;
         }
         self.engine_progress = None;
         self.checked = Instant::now();
-        self.start_transfer("Checking shaders and compositor…", |sender| {
+        self.update_note = "Checking shaders and compositor…".into();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.updates = Some(receiver);
+        std::thread::spawn(move || {
             let effects = match packs::update(&packs::root()) {
                 Ok(note) => format!("Effects: {note}"),
                 Err(e) => format!("Effects: {e:#}"),
             };
-            let engine = match engine::update_available() {
+            let (engine, available) = match engine::update_available() {
                 Ok(available) => {
                     let note = if !available {
                         "Engine: no updates available"
                     } else {
                         "Engine update available · open Settings to update"
                     };
-                    let _ = sender.send(TransferEvent::EngineUpdate(available));
-                    note.to_owned()
+                    (note.to_owned(), Some(available))
                 }
-                Err(e) => format!("Engine: {e:#}"),
+                Err(e) => (format!("Engine: {e:#}"), None),
             };
-            Ok(format!("{effects}\n{engine}"))
+            let _ = sender.send((format!("{effects}\n{engine}"), available));
         });
-    }
-    fn start_transfer(
-        &mut self,
-        note: &str,
-        work: impl FnOnce(std::sync::mpsc::Sender<TransferEvent>) -> anyhow::Result<String>
-        + Send
-        + 'static,
-    ) {
-        if self.transfer.is_some() {
-            return;
-        }
-        let (sender, receiver) = std::sync::mpsc::channel();
-        self.transfer = Some(receiver);
-        self.transfer_note(note.into());
-        std::thread::spawn(move || {
-            let result = work(sender.clone()).map_err(|e| format!("{e:#}"));
-            let _ = sender.send(TransferEvent::Finished(result));
-        });
-    }
-    fn transfer_note(&mut self, note: String) {
-        if self.engine_progress.is_some() {
-            self.renderer_note = note;
-        } else {
-            self.update_note = note;
-        }
     }
     fn start_engine(&mut self, action: engine::Action) {
-        if self.transfer.is_some() {
+        if self.engine_transfer.is_some() {
             return;
         }
         self.show_updates = false;
+        self.show_engine_update = false;
+        self.engine_update = false;
         self.engine_progress = Some(engine::Progress::Checking);
-        self.start_transfer("Checking installed compositor…", move |sender| {
-            engine::setup(action, |progress| {
-                let _ = sender.send(TransferEvent::Progress(progress));
+        self.renderer_note.clear();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.engine_transfer = Some(receiver);
+        std::thread::spawn(move || {
+            let result = engine::setup(action, |progress| {
+                let _ = sender.send(EngineEvent::Progress(progress));
             })
+            .map_err(|e| format!("{e:#}"));
+            let _ = sender.send(EngineEvent::Finished(result));
         });
     }
     fn reload_effects(&mut self) -> anyhow::Result<()> {
@@ -267,7 +251,7 @@ impl Forge {
         let restore_label = "Restore original COSMIC compositor";
         let mut install = button::standard(install_label);
         let mut restore = button::standard(restore_label);
-        if self.transfer.is_none() {
+        if self.engine_transfer.is_none() {
             install = install.on_press(Message::Engine(engine::Action::Install));
             restore = restore.on_press(Message::Engine(engine::Action::Restore));
         }
@@ -466,7 +450,8 @@ impl cosmic::Application for Forge {
             theme_dirty: false,
             status,
             engine_note,
-            transfer: None,
+            updates: None,
+            engine_transfer: None,
             engine_progress: None,
             renderer_note: String::new(),
             show_updates: false,
@@ -530,7 +515,7 @@ impl cosmic::Application for Forge {
     }
     fn header_end(&self) -> Vec<Element<'_, Message>> {
         let mut update = button::icon(widget::icon::from_name("view-refresh-symbolic"));
-        if self.transfer.is_none() {
+        if self.updates.is_none() && self.engine_transfer.is_none() {
             update = update.on_press(Message::CheckUpdates);
         }
         vec![
@@ -560,7 +545,7 @@ impl cosmic::Application for Forge {
     fn footer(&self) -> Option<Element<'_, Message>> {
         if self.error.is_none()
             && self.show_updates
-            && (self.transfer.is_some() || self.checked.elapsed() < Duration::from_secs(20))
+            && (self.updates.is_some() || self.checked.elapsed() < Duration::from_secs(20))
             && !self.update_note.is_empty()
         {
             return Some(
@@ -710,41 +695,49 @@ impl cosmic::Application for Forge {
                 self.flush();
             }
             Message::Tick => {
+                if let Some((note, available)) =
+                    self.updates.as_ref().and_then(|r| r.try_recv().ok())
+                {
+                    self.updates = None;
+                    self.update_note = note;
+                    self.checked = Instant::now();
+                    // A compositor action supersedes the check that was already running.
+                    if self.engine_progress.is_none()
+                        && let Some(available) = available
+                    {
+                        self.show_engine_update = self.show_updates && available;
+                        self.engine_update = available;
+                    }
+                    (self.status, self.engine_note) = store::engine_status();
+                    if let Err(e) = self.reload_effects() {
+                        self.error = Some(format!("{e:#}"));
+                    }
+                }
                 let events = self
-                    .transfer
+                    .engine_transfer
                     .as_ref()
                     .map(|r| r.try_iter().collect::<Vec<_>>())
                     .unwrap_or_default();
                 for event in events {
                     let result = match event {
-                        TransferEvent::EngineUpdate(available) => {
-                            self.show_engine_update = self.show_updates && available;
-                            self.engine_update = available;
-                            continue;
-                        }
-                        TransferEvent::Progress(progress) => {
+                        EngineEvent::Progress(progress) => {
                             self.engine_progress = Some(progress);
                             continue;
                         }
-                        TransferEvent::Finished(result) => result,
+                        EngineEvent::Finished(result) => result,
                     };
-                    self.transfer = None;
-                    if self.engine_progress.is_none() {
-                        self.checked = Instant::now();
-                    }
+                    self.engine_transfer = None;
                     match result {
                         Ok(note) => {
-                            if self.engine_progress.is_some() {
-                                self.engine_update = false;
-                            }
-                            self.transfer_note(note);
+                            self.engine_update = false;
+                            self.renderer_note = note;
                             (self.status, self.engine_note) = store::engine_status();
                             if let Err(e) = self.reload_effects() {
                                 self.error = Some(format!("{e:#}"));
                             }
                         }
                         Err(note) => {
-                            self.transfer_note(note);
+                            self.renderer_note = note;
                             self.engine_progress = None;
                         }
                     }
