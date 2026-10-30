@@ -1,30 +1,38 @@
-## Changes since v0.11.2
+## Changes since v0.12.0
 
-### Added
-
-- **One update window for all three repositories.** The header's update button checks COSMIC Forge, the compositor engine and the official shader pack together. Each available update has an expandable changelog. App updates link to their GitHub release; engine updates open Settings → Patches; verified shader updates install automatically.
-- **Optional automatic update reminders.** Enable the switch at the top of Settings to check on every app launch and once an hour while Forge stays open. The option is off by default. Manual checks always remain available.
-- **Per-effect Animation switch.** Pause or resume animated shaders independently. The choice survives effect switching, restarts and pack updates. Reset controls restores the shader's default.
-- **Support for the latest shader inputs.** Forge detects `window_age`, `output_size` and `surface_position` requirements, enabling Snow's per-window accumulation and Void's monitor-aware perspective with a compatible engine.
-- Source releases now pin [Forge Engine engine-v0.6.0](https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-v0.6.0) and [official shader pack glass-v9](https://github.com/motixo/cosmic-forge-shaders/releases/tag/glass-v9), including Minecraft Glass, Void, Ember and Snow.
+This patch makes engine setup failures easier to diagnose and includes the
+login PATH fix from [Engine 0.6.1](https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-v0.6.1).
 
 ### Fixed
 
-- **About shows actual installed GitHub release tags** for the engine and official shader pack. Renderer revision 7 is no longer presented as an engine release version. Release records are tied to the installed content; unrecognized local builds display “Unknown release” instead of a guessed version.
-- Correct vertical alignment of Snow accumulation and other controls without descriptions.
-- Move Updates to the top of Settings. The update window's engine action scrolls directly to Patches.
-- Keep completed update results inside the update window, removing duplicate status lines from the footer.
+- **Check the compositor actually serving this desktop.** An installed Forge
+  binary or a marker from another compositor no longer implies that shaders
+  are active in the current Wayland session.
+- **Replace the misleading ABI warning with actionable messages.** Distinguish
+  a missing or damaged installation, another running compositor, an older Forge
+  build, a missing runtime marker and an unverifiable desktop session.
+- Show the session state in **Settings → Patches**, **About** and the effect
+  footer. It refreshes while the app is open, including after engine actions.
+- Extend **`cosmic-forge --status`** with the installed engine release, session
+  state, running compositor PID and executable path, and runtime marker PID.
+- Include the engine's managed login-profile cleanup in offline **Restore**.
+  Removing Forge's PATH block preserves user edits outside it and requires no
+  source checkout or network connection.
+- Use **Log out** consistently in the app and setup instructions.
 
-### Compatibility
+### Engine and shader compatibility
 
-- Use **engine-v0.6.0** for all current shaders. `window_age` requires renderer revision 6; monitor geometry inputs require revision 7. Shader ABI 1 remains unchanged.
-- Updating Forge does not replace or restart the desktop compositor. Install engine updates explicitly through **Settings → Patches**, then sign out and back in to activate them.
-- Existing effect preferences, per-effect overrides, imported community effects and recovery backups are preserved. An official pack with locally modified contents must use a new revision; the updater continues to reject conflicting packs at the same revision.
-- Ember retains its upstream attribution and CC BY-NC-SA 3.0 license; see the shader repository's [credits](https://github.com/motixo/cosmic-forge-shaders/blob/glass-v9/CREDITS.md).
+- Source builds now pin **engine-v0.6.1**. Its installer checks the account's
+  login shell with a clean PATH and repairs existing installations that would
+  otherwise keep launching the system compositor.
+- The engine remains at **renderer revision 7 / shader ABI 1**, supporting pinned
+  COSMIC **1.10.0 and 1.11.0**. The official shader pack remains **glass-v9**.
+- To apply the PATH fix to an existing installation, run the engine installer
+  again through **Settings → Patches**, then **log out and back in**.
+- Updating the app does not install or restart the compositor. Existing effect
+  preferences, imported packs and recovery backups are preserved.
 
 ### Install or update
-
-Install or update for the current user:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh | sh
@@ -34,10 +42,17 @@ Ubuntu/Pop!_OS 24.04+: `.deb`. Fedora 43+: `.rpm`. Arch Linux: `.pkg.tar.zst`.
 Ubuntu/Pop and Fedora support x86_64 and ARM64; Arch packages support x86_64.
 Portable archives require glibc 2.35+ and Python 3.11+ for installation.
 
-`SHA256SUMS` covers the release assets. The source archive includes pinned engine and shader sources.
+`SHA256SUMS` covers the release assets. The source archive includes pinned engine
+and shader sources.
 
 ### Validation
 
-Rust unit and integration tests, formatting, Clippy with warnings denied, the release build and Python installer/release tests are checked before publication. Native UI checks cover the three-repository update window, reminder persistence, release links, collapsible changelogs, small windows, About release tags, Snow alignment and compositor actions during update checks. Release CI builds both architectures and installs, opens and removes the native packages on Ubuntu, Fedora and Arch before publishing.
+48 Rust unit and integration tests pass, including session identification and
+source-free offline recovery. Formatting, Clippy with warnings denied and the
+release build pass. Native UI checks cover all seven diagnostic states, live
+status refresh, missing-engine guidance and compositor actions during update
+checks. Engine 0.6.1 also passes 45 Python tests across real login shells.
+Release CI builds both architectures and installs, opens and removes the native
+packages on Ubuntu, Fedora and Arch before publishing.
 
-[Full source changes](https://github.com/motixo/cosmic-forge/compare/v0.11.2...v0.12.0)
+[Full source changes](https://github.com/motixo/cosmic-forge/compare/v0.12.0...v0.12.1)
