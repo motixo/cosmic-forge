@@ -1,55 +1,26 @@
-## Changes since v0.10.0
-
-### Fixed in 0.11.2
-
-- Hide **Backdrop source** when the Forge compositor is missing or its renderer
-  is too old, including on the stock Frosted Glass page and unavailable effects.
-- Require **renderer revision 5** for wallpaper backgrounds. This avoids the
-  Frosted/Aero rendering failure in engine-v0.5.0; install engine-v0.5.1 before
-  using Wallpaper only. Saved per-effect preferences remain intact.
-- Merge the official catalog ordering fix and pin shader pack 7 with Mica.
+## Changes since v0.11.2
 
 ### Added
 
-- **Mica in the official shader catalog:** the bundled shader repository now
-  includes Mica's matte wallpaper material, light/dark themes, inactive-window
-  fallback and independent Blur and Wallpaper color controls. Install official
-  shader pack 7 through **Check for updates** to use it.
-- **Official catalog ordering:** the menu follows the order supplied by the
-  official shader pack, placing Mica immediately above Aero. Community effects
-  keep their relative order after the official presets.
-- **About now reports installed component versions:** the Forge app version,
-  the installed compositor's COSMIC version and renderer revision, and the
-  official shader pack's revision. Bundled shaders and a missing Forge
-  compositor are identified explicitly. Reopening About refreshes these values.
-- **Per-effect background selection:** choose **Behind window** or **Wallpaper
-  only** through the new **Backdrop source** picker. The pack supplies the
-  default; your override is saved independently for each effect and survives
-  restarts, effect switching and pack updates. **Reset controls** restores the
-  pack default. Built-in presets have the same picker.
-- **Animated shader pack support:** JSON and JSON + `.frag` imports can declare
-  `shader.animated`. The renderer supplies time, frame, window position and
-  velocity inputs on all custom bases (`glass`, `aero` and `crystal`). Animation
-  behavior is defined by the shader; existing effects remain static by default.
-- **Wallpaper and window-state pack support:** optional `shader.backdrop` accepts
-  `scene` or `wallpaper`. Shaders can use the engine's `window_active` and
-  `is_dark` inputs without creating pack controls for them.
-- Updated [shader authoring documentation](https://github.com/motixo/cosmic-forge/blob/v0.11.2/docs/adding-effects.md)
-  with the animation, motion, background and window-state contracts.
+- **One update window for all three repositories.** The header's update button checks COSMIC Forge, the compositor engine and the official shader pack together. Each available update has an expandable changelog. App updates link to their GitHub release; engine updates open Settings → Patches; verified shader updates install automatically.
+- **Optional automatic update reminders.** Enable the switch at the top of Settings to check on every app launch and once an hour while Forge stays open. The option is off by default. Manual checks always remain available.
+- **Per-effect Animation switch.** Pause or resume animated shaders independently. The choice survives effect switching, restarts and pack updates. Reset controls restores the shader's default.
+- **Support for the latest shader inputs.** Forge detects `window_age`, `output_size` and `surface_position` requirements, enabling Snow's per-window accumulation and Void's monitor-aware perspective with a compatible engine.
+- Source releases now pin [Forge Engine engine-v0.6.0](https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-v0.6.0) and [official shader pack glass-v9](https://github.com/motixo/cosmic-forge-shaders/releases/tag/glass-v9), including Minecraft Glass, Void, Ember and Snow.
+
+### Fixed
+
+- **About shows actual installed GitHub release tags** for the engine and official shader pack. Renderer revision 7 is no longer presented as an engine release version. Release records are tied to the installed content; unrecognized local builds display “Unknown release” instead of a guessed version.
+- Correct vertical alignment of Snow accumulation and other controls without descriptions.
+- Move Updates to the top of Settings. The update window's engine action scrolls directly to Patches.
+- Keep completed update results inside the update window, removing duplicate status lines from the footer.
 
 ### Compatibility
 
-- **Animation requires renderer revision 3 or newer. Wallpaper backgrounds
-  require renderer revision 5; window-state inputs require revision 4.** Install
-  [Forge Engine engine-v0.5.1](https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-v0.5.1)
-  through **Settings → Patches** to use all of these features, then sign out and
-  back in. Updating Forge alone does not replace the desktop compositor.
-- Forge detects the renderer requirement of imported packs and saved wallpaper
-  choices. Existing static packs retain their previous requirements; omitted
-  `shader.backdrop` keeps the scene background. Shader ABI 1 is unchanged.
-- The source archive pins the compositor-only engine, including the animation,
-  background and state-input changes. Panel, dock and lock screen patches are
-  not included in that engine source.
+- Use **engine-v0.6.0** for all current shaders. `window_age` requires renderer revision 6; monitor geometry inputs require revision 7. Shader ABI 1 remains unchanged.
+- Updating Forge does not replace or restart the desktop compositor. Install engine updates explicitly through **Settings → Patches**, then sign out and back in to activate them.
+- Existing effect preferences, per-effect overrides, imported community effects and recovery backups are preserved. An official pack with locally modified contents must use a new revision; the updater continues to reject conflicting packs at the same revision.
+- Ember retains its upstream attribution and CC BY-NC-SA 3.0 license; see the shader repository's [credits](https://github.com/motixo/cosmic-forge-shaders/blob/glass-v9/CREDITS.md).
 
 ### Install or update
 
@@ -60,17 +31,13 @@ curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh
 ```
 
 Ubuntu/Pop!_OS 24.04+: `.deb`. Fedora 43+: `.rpm`. Arch Linux: `.pkg.tar.zst`.
-Ubuntu/Pop and Fedora builds support x86_64 and ARM64; Arch packages support x86_64.
+Ubuntu/Pop and Fedora support x86_64 and ARM64; Arch packages support x86_64.
 Portable archives require glibc 2.35+ and Python 3.11+ for installation.
-
-Application installation preserves effect preferences and installs only Forge.
 
 `SHA256SUMS` covers the release assets. The source archive includes pinned engine and shader sources.
 
 ### Validation
 
-Local validation passed: 41 Rust tests, `cargo fmt --check`, Clippy with warnings
-denied, the release build, and native About/background-picker UI checks. Engine
-rendering checks are detailed in its separate release notes.
+Rust unit and integration tests, formatting, Clippy with warnings denied, the release build and Python installer/release tests are checked before publication. Native UI checks cover the three-repository update window, reminder persistence, release links, collapsible changelogs, small windows, About release tags, Snow alignment and compositor actions during update checks. Release CI builds both architectures and installs, opens and removes the native packages on Ubuntu, Fedora and Arch before publishing.
 
-[Full source changes](https://github.com/motixo/cosmic-forge/compare/v0.10.0...v0.11.2)
+[Full source changes](https://github.com/motixo/cosmic-forge/compare/v0.11.2...v0.12.0)
