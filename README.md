@@ -20,10 +20,6 @@ Install the compositor from **Settings → Patches**, then sign out and back in.
 
 Enable **Settings → Updates → Automatic update reminders** to check the app,
 engine and shaders whenever Forge opens and every hour while it stays open.
-The option is off by default; the header refresh button always checks all three.
-The update dialog has collapsible changelogs, a release-page link for the app
-and a shortcut to Patches for the engine. Shader updates install automatically;
-app and compositor installation stay under your control.
 
 ## Uninstall
 
