@@ -76,7 +76,6 @@ pub struct Forge {
     error: Option<String>,
     about: bool,
     about_details: String,
-    engine_update: bool,
     show_update_dialog: bool,
     update_report: updates::Report,
     expanded_notes: [bool; 3],
@@ -152,7 +151,6 @@ impl Forge {
         }
         self.show_updates = false;
         self.show_update_dialog = false;
-        self.engine_update = false;
         self.engine_progress = Some(engine::Progress::Checking);
         self.renderer_note.clear();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -522,7 +520,6 @@ impl cosmic::Application for Forge {
             error,
             about: false,
             about_details: String::new(),
-            engine_update: false,
             show_update_dialog: false,
             update_report: updates::Report::default(),
             expanded_notes: [false; 3],
@@ -625,7 +622,7 @@ impl cosmic::Application for Forge {
     fn footer(&self) -> Option<Element<'_, Message>> {
         if self.error.is_none()
             && self.show_updates
-            && (self.updates.is_some() || self.checked.elapsed() < Duration::from_secs(20))
+            && self.updates.is_some()
             && !self.update_note.is_empty()
         {
             return Some(
@@ -633,20 +630,6 @@ impl cosmic::Application for Forge {
                     .padding([10, 24])
                     .width(Length::Fill)
                     .into(),
-            );
-        }
-        if self.error.is_none() && self.engine_update && !self.show_update_dialog {
-            return Some(
-                widget::container(
-                    widget::row::with_capacity(2)
-                        .spacing(16)
-                        .align_y(iced::Alignment::Center)
-                        .push(text::caption("Engine update available"))
-                        .push(button::standard("Go to settings").on_press(Message::EngineSettings)),
-                )
-                .padding([10, 24])
-                .width(Length::Fill)
-                .into(),
             );
         }
         if !matches!(self.page, Page::Effect(_)) && self.error.is_none() {
@@ -843,11 +826,6 @@ impl cosmic::Application for Forge {
                     self.update_note = report.messages.join("\n");
                     self.checked = Instant::now();
                     // A compositor action supersedes the check that was already running.
-                    if self.engine_progress.is_none()
-                        && let Some(available) = report.engine_available
-                    {
-                        self.engine_update = available;
-                    }
                     if self.engine_progress.is_some() {
                         report
                             .releases
@@ -879,7 +857,6 @@ impl cosmic::Application for Forge {
                     self.engine_transfer = None;
                     match result {
                         Ok(note) => {
-                            self.engine_update = false;
                             self.renderer_note = note;
                             (self.status, self.engine_note) = store::engine_status();
                             if let Err(e) = self.reload_effects() {
