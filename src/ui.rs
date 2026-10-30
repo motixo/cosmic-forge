@@ -324,14 +324,16 @@ impl Forge {
             );
         }
         for (i, control) in effect.controls.iter().enumerate() {
+            let mut item = settings::item::builder(control.label.as_str());
+            if !control.description.trim().is_empty() {
+                item = item.description(control.description.as_str());
+            }
             match control.kind {
                 ControlKind::Boolean => {
                     section = section.add(
-                        settings::item::builder(control.label.as_str())
-                            .description(control.description.as_str())
-                            .toggler(self.value(control).as_bool().unwrap_or(false), move |v| {
-                                Message::Value(i, json!(v))
-                            }),
+                        item.toggler(self.value(control).as_bool().unwrap_or(false), move |v| {
+                            Message::Value(i, json!(v))
+                        }),
                     )
                 }
                 ControlKind::Integer => {
@@ -359,9 +361,7 @@ impl Forge {
                         control.max,
                         move |v| Message::Value(i, json!(v)),
                     );
-                    let heading = settings::item::builder(control.label.as_str())
-                        .description(control.description.as_str())
-                        .control(spin);
+                    let heading = item.control(spin);
                     section = section.add(
                         widget::column::with_capacity(8)
                             .spacing(12)
