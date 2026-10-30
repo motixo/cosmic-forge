@@ -398,6 +398,12 @@ impl Forge {
         widget::column::with_capacity(5)
             .spacing(24)
             .push(text::title2("Settings"))
+            .push(
+                settings::section().title("Updates")
+                    .add(settings::item::builder("Automatic update reminders")
+                        .toggler(self.state.automatic_updates, Message::AutomaticUpdates))
+                    .add(text::caption("Check the app, engine and shaders on startup and every hour. Shader updates install automatically.")),
+            )
             .push(effects)
             .push(
                 settings::section().title("Patches").add(
@@ -406,12 +412,6 @@ impl Forge {
                         .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install the prebuilt compositor, then sign out and back in."))
                         .push(self.compositor_view()),
                 ),
-            )
-            .push(
-                settings::section().title("Updates")
-                    .add(settings::item::builder("Automatic update reminders")
-                        .toggler(self.state.automatic_updates, Message::AutomaticUpdates))
-                    .add(text::caption("Check the app, engine and shaders on startup and every hour. Shader updates install automatically.")),
             )
             .into()
     }
@@ -618,6 +618,7 @@ impl cosmic::Application for Forge {
                 .padding(24)
                 .width(Length::Fill),
         )
+        .id(widget::Id::new("main-content"))
         .height(Length::Fill)
         .into()
     }
@@ -738,6 +739,7 @@ impl cosmic::Application for Forge {
         ])
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        let mut task = Task::none();
         match message {
             Message::DismissUpdates => self.show_update_dialog = false,
             Message::AutomaticUpdates(enabled) => {
@@ -786,6 +788,11 @@ impl cosmic::Application for Forge {
                         self.settings_return = self.page;
                     }
                     self.page = Page::Settings;
+                    self.sync_selection();
+                    task = iced::widget::scrollable::snap_to(
+                        widget::Id::new("main-content"),
+                        iced::widget::scrollable::RelativeOffset::END.into(),
+                    );
                 }
             }
             Message::Value(index, value) => {
@@ -935,6 +942,12 @@ impl cosmic::Application for Forge {
                         }
                     };
                     self.sync_selection();
+                    if matches!(self.page, Page::Settings) {
+                        task = iced::widget::scrollable::snap_to(
+                            widget::Id::new("main-content"),
+                            iced::widget::scrollable::RelativeOffset::START.into(),
+                        );
+                    }
                 }
             }
             Message::Engine(action) => self.start_engine(action),
@@ -1045,10 +1058,13 @@ impl cosmic::Application for Forge {
             }
         }
         if std::mem::take(&mut self.theme_dirty) {
-            return Task::done(cosmic::Action::Cosmic(cosmic::app::Action::AppThemeChange(
-                cosmic::theme::system_preference(),
-            )));
+            return Task::batch([
+                task,
+                Task::done(cosmic::Action::Cosmic(cosmic::app::Action::AppThemeChange(
+                    cosmic::theme::system_preference(),
+                ))),
+            ]);
         }
-        Task::none()
+        task
     }
 }

@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/cosmic-forge')
     args = parser.parse_args()
-    button_y = 514
+    button_y = 663
     artifacts = ROOT / 'build/qa-compositor-actions'
     artifacts.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='forge-actions-', dir=ROOT / 'build') as temporary:
@@ -92,7 +92,7 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             session.click(856, 24)
             session.scroll_to_top()
             session.capture('install-only').save(artifacts / 'install-only.png')
-            session.click(450, 562)
+            session.click(450, 712)
             deadline = time.monotonic() + 5
             while launcher.exists() and time.monotonic() < deadline:
                 time.sleep(.1)

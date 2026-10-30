@@ -104,9 +104,10 @@ with tempfile.TemporaryDirectory(prefix='forge-updates-', dir=ROOT / 'build') as
         session.click(310, 423)
         session.capture('compositor-only-settings')
 
+        session.scroll_to_top()
         setting = session.config / 'cosmic-forge/automatic-updates.json'
         assert not setting.exists()
-        session.click(960, 663)
+        session.click(960, 191)
         assert json.loads(setting.read_text()) is True
         time.sleep(3)
         assert len((fixture / 'audit').read_text().splitlines()) == 10
@@ -137,7 +138,7 @@ with tempfile.TemporaryDirectory(prefix='forge-updates-', dir=ROOT / 'build') as
         session.capture('startup-reminder')
         session.key('Escape')
         session.click(856, 24)
-        session.click(960, 663)
+        session.click(960, 191)
         session.capture('automatic-updates-disabled')
         assert json.loads(setting.read_text()) is False
         restart()
