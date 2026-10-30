@@ -601,13 +601,13 @@ pub fn renderer_available(minimum_revision: u64) -> bool {
 
 fn compositor_version(state: &Path, launcher: &Path) -> Option<String> {
     installed_engine(state, launcher, 0)?;
-    let record: Value = serde_json::from_slice(
-        &fs::read(state.join("cosmic-forge/engine-installation.json")).ok()?,
-    )
-    .ok()?;
+    let bytes = fs::read(state.join("cosmic-forge/engine-installation.json")).ok()?;
+    let record: Value = serde_json::from_slice(&bytes).ok()?;
     let version = record["cosmic_version"].as_str()?;
-    let renderer = record["renderer_revision"].as_u64().unwrap_or(1);
-    Some(format!("COSMIC {version} · renderer {renderer}"))
+    let release =
+        crate::updates::release_tag(&state.join("cosmic-forge/engine-release.json"), &bytes)
+            .unwrap_or_else(|| "Unknown release".into());
+    Some(format!("{release} · COSMIC {version}"))
 }
 
 pub fn installed_compositor_version() -> Option<String> {
@@ -720,10 +720,20 @@ mod engine_tests {
         assert_eq!(installed_engine(&state, &launcher, 1), Some(binary.clone()));
         assert_eq!(
             compositor_version(&state, &launcher).as_deref(),
-            Some("COSMIC 1.10.0 · renderer 1")
+            Some("Unknown release · COSMIC 1.10.0")
         );
         assert!(installed_engine(&state, &launcher, 2).is_none());
         let record_path = state.join("cosmic-forge/engine-installation.json");
+        crate::updates::save_release_tag(
+            &state.join("cosmic-forge/engine-release.json"),
+            "engine-v0.6.0",
+            &fs::read(&record_path).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            compositor_version(&state, &launcher).as_deref(),
+            Some("engine-v0.6.0 · COSMIC 1.10.0")
+        );
         let mut record: Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
         record["renderer_revision"] = json!(2);
         fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -733,7 +743,7 @@ mod engine_tests {
         fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
         assert_eq!(
             compositor_version(&state, &launcher).as_deref(),
-            Some("COSMIC 1.10.0 · renderer 3")
+            Some("Unknown release · COSMIC 1.10.0")
         );
         assert_eq!(installed_engine(&state, &launcher, 3), Some(binary.clone()));
         fs::write(&launcher, b"another compositor").unwrap();

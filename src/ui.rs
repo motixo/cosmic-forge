@@ -876,13 +876,16 @@ impl cosmic::Application for Forge {
                 if show {
                     let compositor = store::installed_compositor_version()
                         .unwrap_or_else(|| "Not installed".into());
-                    let shaders = packs::installed_revision(&packs::root()).map_or_else(
-                        || "Bundled".into(),
-                        |revision| format!("revision {revision}"),
-                    );
-                    self.about_details = format!(
-                        "Version {VERSION}\nForge compositor: {compositor}\nShader pack: {shaders}"
-                    );
+                    let shaders =
+                        packs::installed_release_tag(&packs::root()).unwrap_or_else(|| {
+                            if packs::installed_revision(&packs::root()).is_some() {
+                                "Unknown release".into()
+                            } else {
+                                "Bundled".into()
+                            }
+                        });
+                    self.about_details =
+                        format!("Version {VERSION}\nEngine: {compositor}\nShader pack: {shaders}");
                 }
                 self.about = show;
             }

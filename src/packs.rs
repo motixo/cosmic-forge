@@ -72,6 +72,11 @@ pub fn installed_revision(data_root: &Path) -> Option<u64> {
     (pack.id == OFFICIAL).then_some(pack.revision)
 }
 
+pub fn installed_release_tag(data_root: &Path) -> Option<String> {
+    let bytes = read(&data_root.join("packs").join(format!("{OFFICIAL}.json"))).ok()?;
+    crate::updates::release_tag(&data_root.join("official-release.json"), &bytes)
+}
+
 impl Pack {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.format == 1, "Unsupported effect pack format");
@@ -475,7 +480,11 @@ pub fn update_from_release(
             .as_str()
             .context("Missing release asset digest")?,
     )?;
-    install(data_root, &bytes, true)
+    let note = install(data_root, &bytes, true)?;
+    if let Some(tag) = release["tag_name"].as_str() {
+        crate::updates::save_release_tag(&data_root.join("official-release.json"), tag, &bytes)?;
+    }
+    Ok(note)
 }
 
 fn now() -> u64 {

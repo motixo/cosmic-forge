@@ -724,13 +724,24 @@ fn github_download_checks_digest_and_keeps_community_effects() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let mut release = json!({"assets":[{"name":packs::ASSET,"size":bytes.len(),
+    let mut release = json!({"tag_name":"glass-v9","assets":[{"name":packs::ASSET,"size":bytes.len(),
         "browser_download_url":"https://github.com/motixo/cosmic-forge-shaders/releases/download/test/cosmic-forge-glass.json",
         "digest":format!("sha256:{digest}")}]});
     packs::update_from_release(temp.path(), &serde_json::to_vec(&release).unwrap(), |_| {
         Ok(bytes.clone())
     })
     .unwrap();
+    assert_eq!(
+        packs::installed_release_tag(temp.path()).as_deref(),
+        Some("glass-v9")
+    );
+    fs::write(
+        temp.path().join("packs/cosmic-glass.json"),
+        b"changed local build",
+    )
+    .unwrap();
+    assert_eq!(packs::installed_release_tag(temp.path()), None);
+    fs::write(temp.path().join("packs/cosmic-glass.json"), &bytes).unwrap();
     assert_eq!(
         catalog::load(&temp.path().join("effects")).unwrap().len(),
         4

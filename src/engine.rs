@@ -147,6 +147,19 @@ fn update_needed(state: &Path, bundle: &str) -> Result<bool> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok());
     Ok(saved.as_ref() != Some(&receipt(bundle, &bytes)))
 }
+
+fn remember_release(state: &Path, bundle: &str, tag: &str) -> Result<()> {
+    let Ok(record) = fs::read(state.join("engine-installation.json")) else {
+        return Ok(());
+    };
+    let saved: Option<serde_json::Value> = fs::read(state.join("engine-compositor-receipt.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    if saved.as_ref() == Some(&receipt(bundle, &record)) {
+        crate::updates::save_release_tag(&state.join("engine-release.json"), tag, &record)?;
+    }
+    Ok(())
+}
 pub fn update_available() -> Result<bool> {
     let (status, metadata) = crate::packs::download(&format!(
         "https://api.github.com/repos/{REPOSITORY}/releases/latest"
@@ -158,12 +171,19 @@ pub fn update_available() -> Result<bool> {
         ensure!(status == 200, "The engine package is unavailable");
         Ok(bytes)
     })?;
-    update_needed(
-        &xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge"),
-        root.file_name()
-            .and_then(|v| v.to_str())
-            .context("Missing engine package hash")?,
-    )
+    let state = xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge");
+    let bundle = root
+        .file_name()
+        .and_then(|v| v.to_str())
+        .context("Missing engine package hash")?;
+    let available = update_needed(&state, bundle)?;
+    if !available {
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata)?;
+        if let Some(tag) = metadata["tag_name"].as_str() {
+            remember_release(&state, bundle, tag)?;
+        }
+    }
+    Ok(available)
 }
 fn save_receipt(root: &std::path::Path) -> Result<()> {
     let state = xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge");
@@ -276,8 +296,8 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(log.try_clone()?);
-    if let Some(tag) = release_tag {
-        command.args(["--release-tag", &tag]);
+    if let Some(tag) = release_tag.as_deref() {
+        command.args(["--release-tag", tag]);
     }
     let mut child = command
         .spawn()
@@ -320,6 +340,16 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
     );
     if !restore {
         save_receipt(&root)?;
+        if let Some(tag) = release_tag.as_deref() {
+            let state = xdg("XDG_STATE_HOME", ".local/state").join("cosmic-forge");
+            remember_release(
+                &state,
+                root.file_name()
+                    .and_then(|v| v.to_str())
+                    .context("Missing engine package hash")?,
+                tag,
+            )?;
+        }
     }
     Ok(if last == Progress::AlreadyInstalled {
         "The matching Forge glass renderer is already installed. No rebuild or reinstall needed."
@@ -359,6 +389,14 @@ mod update_tests {
         .unwrap();
         assert!(!update_needed(state, "bundle-a").unwrap());
         assert!(update_needed(state, "bundle-b").unwrap());
+        let tag_path = state.join("engine-release.json");
+        remember_release(state, "bundle-b", "engine-v0.7.0").unwrap();
+        assert!(crate::updates::release_tag(&tag_path, record).is_none());
+        remember_release(state, "bundle-a", "engine-v0.6.0").unwrap();
+        assert_eq!(
+            crate::updates::release_tag(&tag_path, record).as_deref(),
+            Some("engine-v0.6.0")
+        );
         fs::write(
             state.join("engine-installation.json"),
             b"changed installation",
