@@ -23,7 +23,19 @@ pub struct Shader {
 
 impl Shader {
     pub fn renderer_revision(&self) -> u64 {
-        if self.backdrop == crate::runtime::Backdrop::Wallpaper {
+        if self
+            .source
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|word| matches!(word, "output_size" | "surface_position"))
+        {
+            7
+        } else if self
+            .source
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|word| word == "window_age")
+        {
+            6
+        } else if self.backdrop == crate::runtime::Backdrop::Wallpaper {
             crate::engine::WALLPAPER_RENDERER_REVISION
         } else if self
             .source

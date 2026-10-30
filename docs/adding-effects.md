@@ -138,12 +138,24 @@ contract below. External images and extra render passes are not supplied.
 | `v_coords` | Texture UV for the captured background |
 | `input_to_geo` | Transform `vec3(v_coords, 1)` into surface-local UV |
 | `geo_size` | Surface size in logical units |
+| `output_size` | Current rendering monitor size in logical units, renderer 7+ |
+| `surface_position` | Surface top-left relative to that output, in logical units, renderer 7+ |
 | `corner_radius` | Surface corner radii |
 | `uv_per_pixel` | UV step per logical pixel of the extended background capture |
 | `output_scale` | Output scale factor |
 | `blur_amount` | Selected blur normalized to 0–1 |
 | `theme_tint`, `theme_accent` | Current surface palette and accent RGB |
 | `alpha` | Compositor opacity multiplier |
+
+`output_size` follows the output being rendered, including rotation and fractional
+scale. Each part of a window spanning outputs receives that output's dimensions;
+it is not the primary monitor or combined desktop size. It is also available for
+static shaders without enabling continuous animation. Multiply by `output_scale`
+for transformed physical pixel dimensions. Resolution or scale changes update it
+on the next render; it is zero when there is no current output mode.
+`surface_position + geo_size * 0.5 - output_size * 0.5` gives the window-center
+offset on that monitor, including rotated or scaled outputs, without framebuffer
+axis assumptions. Both geometry inputs are available when animation is disabled.
 
 Preserve the template's clipping, premultiplied alpha and texture variants. Clamp
 custom sampling to the available capture; this base has no automatic refraction
@@ -178,6 +190,7 @@ Declare only the engine inputs your fragment shader uses:
 
 ```glsl
 uniform float time;
+uniform float window_age;
 uniform float delta_time;
 uniform int frame_index;
 uniform vec2 window_position;
@@ -194,6 +207,15 @@ rendered frames, in seconds, capped at 0.25 after a pause. `frame_index` is an
 integer counter for that output and wraps on overflow. All surfaces on the same
 output receive the same values during a frame. These inputs are provided by the
 engine; do not map them in `shader.uniforms` or define controls for them.
+
+Renderer revision 6 also supplies `window_age`: seconds since this custom effect
+first rendered on the individual glass surface. A newly opened window starts at
+zero even while older windows keep their age. The clock stays with the surface
+across resizing, movement, hidden intervals and output changes. Applying another
+custom effect starts a new clock; changing its controls or source does not.
+Like `time`, its shader value is zero when animation is disabled. The stored clock
+continues running while animation is off. Declare it only for effects requiring
+the newer renderer; existing shaders retain their current requirements.
 
 `window_position` is the top-left of the effect surface in logical desktop
 coordinates (X right, Y down), including the output's desktop offset. It does

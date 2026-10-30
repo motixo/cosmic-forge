@@ -33,7 +33,17 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     let effects = catalog::load(&root.join("effects")).unwrap();
     assert_eq!(
         effects.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-        ["frosted", "crystal", "mica", "aero", "liquid-glass"]
+        [
+            "frosted",
+            "crystal",
+            "mica",
+            "aero",
+            "liquid-glass",
+            "minecraft-glass",
+            "void",
+            "ember",
+            "snow"
+        ]
     );
     assert!(effects[1..].iter().all(|e| e.shader.is_some()));
     let mica = effects.iter().find(|e| e.id == "mica").unwrap();
@@ -367,6 +377,20 @@ fn animated_shaders_import_and_preserve_legacy_static_runtime() {
     assert!(runtime.animated && runtime.valid());
     assert_eq!(runtime.parameters[0].value, 72.0);
     let mut static_effect = effect.clone();
+    let mut accumulating = effect.clone();
+    let shader = accumulating.shader.as_mut().unwrap();
+    shader.source.push_str("\nuniform float window_age;\n");
+    assert_eq!(shader.renderer_revision(), 6);
+    shader.backdrop = cosmic_forge::runtime::Backdrop::Wallpaper;
+    assert_eq!(shader.renderer_revision(), 6);
+    shader.source.push_str("\nuniform vec2 output_size;\n");
+    shader.animated = false;
+    assert_eq!(shader.renderer_revision(), 7);
+    let mut positioned = effect.clone();
+    let shader = positioned.shader.as_mut().unwrap();
+    shader.source.push_str("\nuniform vec2 surface_position;\n");
+    shader.animated = false;
+    assert_eq!(shader.renderer_revision(), 7);
     static_effect.shader.as_mut().unwrap().animated = false;
     assert_eq!(
         static_effect.shader.as_ref().unwrap().renderer_revision(),
