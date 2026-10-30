@@ -35,10 +35,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let effects =
                 catalog::load(&xdg("XDG_DATA_HOME", ".local/share").join("cosmic-forge/effects"))?;
             let state = store.fingerprint(&effects);
+            let engine = cosmic_forge::store::engine_status();
             println!(
                 "{}",
                 serde_json::to_string_pretty(
-                    &serde_json::json!({"application": APP_ID, "version": VERSION, "effect": state.selected, "dark": state.dark, "accent": state.accent, "controls": effects.iter().flat_map(|e| e.controls.iter()).map(|c| (c.key.clone(),store.value(c))).collect::<serde_json::Map<_,_>>(), "surfaces": state.categories})
+                    &serde_json::json!({"application": APP_ID, "version": VERSION, "effect": state.selected, "dark": state.dark, "accent": state.accent, "controls": effects.iter().flat_map(|e| e.controls.iter()).map(|c| (c.key.clone(),store.value(c))).collect::<serde_json::Map<_,_>>(), "surfaces": state.categories, "engine": {"state": engine.state, "status": engine.label(), "message": engine.note(), "installed_version": cosmic_forge::store::installed_compositor_version(), "installed_executable": engine.installed_executable, "running": engine.running, "marker_pid": engine.marker_pid}})
                 )?
             );
             return Ok(());

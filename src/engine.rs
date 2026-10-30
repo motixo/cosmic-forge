@@ -14,6 +14,7 @@ pub const ASSET: &str = "cosmic-forge-engine.json";
 pub const WALLPAPER_RENDERER_REVISION: u64 = 5;
 // Only offline stock recovery is embedded; engine setup uses verified releases.
 const RECOVERY: &str = include_str!("../engine/recovery.py");
+const LOGIN_PATH: &str = include_str!("../engine/login_path.py");
 
 #[derive(serde::Deserialize)]
 struct Bundle {
@@ -252,7 +253,7 @@ impl Progress {
             Self::Building => "Compiling the glass renderer…",
             Self::Installing => "Installing the glass renderer…",
             Self::Restoring => "Restoring the original COSMIC compositor…",
-            Self::Complete => "Finished · sign out and back in to activate",
+            Self::Complete => "Finished · log out and back in to activate",
             Self::AlreadyInstalled => "This renderer version is already installed",
         }
     }
@@ -267,7 +268,10 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
     progress(Progress::Checking);
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
     let root = if restore {
-        let files = std::collections::BTreeMap::from([("recovery.py".into(), RECOVERY.into())]);
+        let files = std::collections::BTreeMap::from([
+            ("recovery.py".into(), RECOVERY.into()),
+            ("login_path.py".into(), LOGIN_PATH.into()),
+        ]);
         let hash = Sha256::digest(serde_json::to_vec(&files)?)
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -358,9 +362,9 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
         "The matching Forge glass renderer is already installed. No rebuild or reinstall needed."
             .into()
     } else if restore {
-        "Original COSMIC compositor restored. Sign out and back in to activate it.".into()
+        "Original COSMIC compositor restored. Log out and back in to activate it.".into()
     } else {
-        "Glass renderer installed. Sign out and back in to activate it.".into()
+        "Glass renderer installed. Log out and back in to activate it.".into()
     })
 }
 

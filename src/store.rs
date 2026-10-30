@@ -649,50 +649,251 @@ pub fn effect_available(effect: &Effect) -> bool {
         )
 }
 
-pub fn engine_status() -> (&'static str, Option<&'static str>) {
-    if let Some(installed) = installed_engine(
-        &xdg("XDG_STATE_HOME", ".local/state"),
-        &xdg("HOME", "").join(".local/bin/cosmic-comp"),
-        0,
-    ) {
-        if let (Ok(installed), Ok(own), Ok(processes)) = (
-            fs::metadata(installed),
-            fs::metadata("/proc/self"),
-            fs::read_dir("/proc"),
-        ) {
-            for process in processes.flatten() {
-                let path = process.path();
-                if path
-                    .file_name()
-                    .is_none_or(|p| !p.to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
-                {
-                    continue;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineState {
+    Active,
+    NotInstalled,
+    InstallationInvalid,
+    DifferentCompositor,
+    RestartRequired,
+    RuntimeUnconfirmed,
+    SessionUnverified,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunningCompositor {
+    pub pid: u32,
+    pub executable: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EngineStatus {
+    pub state: EngineState,
+    pub installed_executable: Option<PathBuf>,
+    pub running: Option<RunningCompositor>,
+    pub marker_pid: Option<u32>,
+}
+
+impl EngineStatus {
+    pub fn label(&self) -> &'static str {
+        match self.state {
+            EngineState::Active => "Live on your desktop",
+            EngineState::NotInstalled => "Desktop effects",
+            EngineState::InstallationInvalid => "Engine installation needs repair",
+            EngineState::DifferentCompositor => "Another compositor is running",
+            EngineState::RestartRequired => "Engine restart required",
+            EngineState::RuntimeUnconfirmed => "Forge runtime could not be confirmed",
+            EngineState::SessionUnverified => "Desktop session could not be verified",
+        }
+    }
+
+    pub fn note(&self) -> Option<&'static str> {
+        match self.state {
+            EngineState::Active => None,
+            EngineState::NotInstalled => Some(
+                "Custom shaders require the Forge compositor. Install it in Settings, then log out and back in to activate the engine.",
+            ),
+            EngineState::InstallationInvalid => Some(
+                "The installed engine files or launcher no longer match the installation record. Install / update the compositor in Settings.",
+            ),
+            EngineState::DifferentCompositor => Some(
+                "Forge is installed, but this desktop session is running another compositor. Log out and back in. If this persists, check your login session's PATH.",
+            ),
+            EngineState::RestartRequired => Some(
+                "A different Forge engine build is running. Log out and back in to activate the installed engine.",
+            ),
+            EngineState::RuntimeUnconfirmed => Some(
+                "The installed Forge compositor is running, but its runtime marker is missing or stale. Shader support could not be confirmed; check the session logs.",
+            ),
+            EngineState::SessionUnverified => Some(
+                "The running compositor could not be identified. Open Forge inside your COSMIC desktop session and check that its Wayland socket and process information are accessible.",
+            ),
+        }
+    }
+}
+
+fn session_compositor(socket: &Path, proc_root: &Path) -> Option<RunningCompositor> {
+    use rustix::net::{self, AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
+    // Query this display's server, not an unrelated or nested compositor with the same name.
+    let connection = net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        SocketFlags::CLOEXEC | SocketFlags::NONBLOCK,
+        None,
+    )
+    .ok()?;
+    net::connect(&connection, &SocketAddrUnix::new(socket).ok()?).ok()?;
+    let credentials = net::sockopt::socket_peercred(&connection).ok()?;
+    if credentials.uid != rustix::process::getuid() {
+        return None;
+    }
+    let pid = credentials.pid.as_raw_pid() as u32;
+    let process = proc_root.join(pid.to_string());
+    Some(RunningCompositor {
+        pid,
+        executable: fs::read_link(process.join("exe")).ok()?,
+    })
+}
+
+fn diagnose_engine(
+    state: &Path,
+    launcher: &Path,
+    runtime: &Path,
+    socket: &Path,
+    proc_root: &Path,
+) -> EngineStatus {
+    let installed_executable = installed_engine(state, launcher, 1);
+    let running = session_compositor(socket, proc_root);
+    let marker_pid = fs::read_to_string(runtime.join("cosmic-forge-engine-v1"))
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .filter(|pid| *pid > 0);
+    let state = match (&installed_executable, &running) {
+        (None, _) if state.join("cosmic-forge/engine-installation.json").exists() => {
+            EngineState::InstallationInvalid
+        }
+        (None, _) => EngineState::NotInstalled,
+        (Some(_), None) => EngineState::SessionUnverified,
+        (Some(installed), Some(running)) => {
+            let process = proc_root.join(running.pid.to_string());
+            match (fs::metadata(installed), fs::metadata(process.join("exe"))) {
+                (Ok(installed), Ok(actual)) => {
+                    let announced = marker_pid == Some(running.pid)
+                        && Store::text(&process.join("comm"), "") == "cosmic-comp";
+                    if installed.ino() == actual.ino() && installed.dev() == actual.dev() {
+                        if announced {
+                            EngineState::Active
+                        } else {
+                            EngineState::RuntimeUnconfirmed
+                        }
+                    } else if announced {
+                        EngineState::RestartRequired
+                    } else {
+                        EngineState::DifferentCompositor
+                    }
                 }
-                if fs::metadata(&path).is_ok_and(|metadata| metadata.uid() == own.uid())
-                    && Store::text(&path.join("comm"), "") == "cosmic-comp"
-                    && let Ok(running) = fs::metadata(path.join("exe"))
-                    && running.ino() == installed.ino()
-                    && running.dev() == installed.dev()
-                {
-                    return ("Live on your desktop", None);
-                }
+                _ => EngineState::SessionUnverified,
             }
         }
-        (
-            "Ready for next login",
-            Some("Sign out and back in once to activate the installed effects engine."),
-        )
-    } else {
-        (
-            "Desktop effects",
-            Some("These controls require the COSMIC Crystal / Aero compositor."),
-        )
+    };
+    EngineStatus {
+        state,
+        installed_executable,
+        running,
+        marker_pid,
     }
+}
+
+pub fn engine_status() -> EngineStatus {
+    let runtime = xdg("XDG_RUNTIME_DIR", ".cache");
+    let display = env::var_os("WAYLAND_DISPLAY").unwrap_or_else(|| "wayland-0".into());
+    diagnose_engine(
+        &xdg("XDG_STATE_HOME", ".local/state"),
+        &xdg("HOME", "").join(".local/bin/cosmic-comp"),
+        &runtime,
+        &runtime.join(display),
+        Path::new("/proc"),
+    )
 }
 
 #[cfg(test)]
 mod engine_tests {
     use super::*;
+
+    #[test]
+    fn runtime_diagnostics_follow_the_display_server_and_validate_its_executable() {
+        use std::os::unix::{fs::symlink, net::UnixListener};
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let state = root.join("state");
+        let launcher = root.join("cosmic-comp");
+        let destination = root.join("engine");
+        let binary = destination.join("cosmic-comp");
+        let socket = root.join("wayland-test");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        let pid = std::process::id();
+        let proc_root = root.join("proc");
+        let process = proc_root.join(pid.to_string());
+        fs::create_dir_all(&process).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::create_dir_all(state.join("cosmic-forge")).unwrap();
+        fs::write(&launcher, b"launcher").unwrap();
+        fs::write(&binary, b"installed Forge").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        let stock = root.join("stock-compositor");
+        fs::write(&stock, b"stock COSMIC").unwrap();
+        symlink(&stock, process.join("exe")).unwrap();
+        fs::write(process.join("comm"), "cosmic-comp\n").unwrap();
+        let record = state.join("cosmic-forge/engine-installation.json");
+        let digest: String = Sha256::digest(b"launcher")
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        fs::write(
+            &record,
+            serde_json::to_vec(&json!({
+                "abi":1, "renderer_revision":7, "destination":destination,
+                "launcher":launcher, "launcher_sha256":digest
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let inspect = || diagnose_engine(&state, &launcher, root, &socket, &proc_root);
+        let marker = root.join("cosmic-forge-engine-v1");
+
+        // An installed Forge and a terminal's PATH do not identify the desktop server.
+        let actual = inspect();
+        assert_eq!(actual.state, EngineState::DifferentCompositor);
+        assert_eq!(actual.running.as_ref().unwrap().pid, pid);
+        assert_eq!(actual.running.unwrap().executable, stock);
+
+        // A marker belonging to another (e.g. nested) Forge must not mark this session live.
+        fs::write(&marker, "2147483647").unwrap();
+        let nested = proc_root.join("2147483647");
+        fs::create_dir_all(&nested).unwrap();
+        symlink(&binary, nested.join("exe")).unwrap();
+        fs::write(nested.join("comm"), "cosmic-comp\n").unwrap();
+        assert_eq!(inspect().state, EngineState::DifferentCompositor);
+
+        fs::remove_file(process.join("exe")).unwrap();
+        symlink(&binary, process.join("exe")).unwrap();
+        assert_eq!(inspect().state, EngineState::RuntimeUnconfirmed);
+        fs::remove_file(&marker).unwrap();
+        assert_eq!(inspect().state, EngineState::RuntimeUnconfirmed);
+        fs::write(&marker, "invalid marker").unwrap();
+        assert_eq!(inspect().state, EngineState::RuntimeUnconfirmed);
+        fs::write(&marker, pid.to_string()).unwrap();
+        assert_eq!(inspect().state, EngineState::Active);
+        assert_eq!(inspect().note(), None);
+        fs::write(process.join("comm"), "another-process\n").unwrap();
+        assert_eq!(inspect().state, EngineState::RuntimeUnconfirmed);
+        fs::write(process.join("comm"), "cosmic-comp\n").unwrap();
+
+        // A running old executable survives replacement of the installed path.
+        let old = root.join("running-old-engine");
+        fs::hard_link(&binary, &old).unwrap();
+        fs::remove_file(process.join("exe")).unwrap();
+        symlink(&old, process.join("exe")).unwrap();
+        let new = root.join("new-engine");
+        fs::write(&new, b"new Forge").unwrap();
+        fs::set_permissions(&new, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::rename(new, &binary).unwrap();
+        assert_eq!(inspect().state, EngineState::RestartRequired);
+
+        let inaccessible = root.join("missing-wayland-socket");
+        assert_eq!(
+            diagnose_engine(&state, &launcher, root, &inaccessible, &proc_root).state,
+            EngineState::SessionUnverified
+        );
+        fs::remove_file(&old).unwrap();
+        assert_eq!(inspect().state, EngineState::SessionUnverified);
+        fs::write(&launcher, b"replaced launcher").unwrap();
+        assert_eq!(inspect().state, EngineState::InstallationInvalid);
+        fs::remove_file(record).unwrap();
+        assert_eq!(inspect().state, EngineState::NotInstalled);
+    }
 
     #[test]
     fn availability_requires_a_matching_launcher_and_executable_renderer() {

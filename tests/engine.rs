@@ -289,7 +289,10 @@ fn offline_recovery_restores_original_compositor_without_the_source_checkout() {
                 .unwrap()
                 .contains("Original COSMIC compositor restored")
         );
-        assert_eq!(cosmic_forge::store::engine_status().0, "Desktop effects");
+        assert_eq!(
+            cosmic_forge::store::engine_status().label(),
+            "Desktop effects"
+        );
         assert!(stages.contains(&cosmic_forge::engine::Progress::Restoring));
         assert_eq!(
             stages.last(),
@@ -322,11 +325,24 @@ fn offline_recovery_restores_original_compositor_without_the_source_checkout() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
+    let profile = home.join(".profile");
+    let directory = launcher.parent().unwrap().display();
+    let block = format!(
+        "# >>> COSMIC Forge login PATH >>>\nif [ \"${{PATH%%:*}}\" != {directory} ]; then\n    export PATH={directory}:\"$PATH\"\nfi\n# <<< COSMIC Forge login PATH <<<\n"
+    );
+    let profile_setup = format!("# original settings\n{block}");
+    fs::write(&profile, format!("{profile_setup}# later user edit\n")).unwrap();
+    let profile_digest: String = Sha256::digest(profile_setup.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     fs::write(
         state.join("cosmic-forge/engine-installation.json"),
         serde_json::to_vec(&serde_json::json!({
             "abi":1, "launcher":launcher, "launcher_sha256":digest,
-            "previous":{"data":STANDARD.encode(previous),"mode":493}
+            "previous":{"data":STANDARD.encode(previous),"mode":493},
+            "login_profiles":[{"path":profile,"kind":"sh","created":false,
+                "separator":false,"installed_sha256":profile_digest}]
         }))
         .unwrap(),
     )
@@ -357,6 +373,10 @@ fn offline_recovery_restores_original_compositor_without_the_source_checkout() {
         return;
     }
     assert!(!launcher.exists());
+    assert_eq!(
+        fs::read_to_string(profile).unwrap(),
+        "# original settings\n# later user edit\n"
+    );
     assert_eq!(fs::read(recovery).unwrap(), previous);
     assert!(!state.join("cosmic-forge/engine-installation.json").exists());
 }

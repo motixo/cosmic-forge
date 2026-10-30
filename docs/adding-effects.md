@@ -369,7 +369,12 @@ compositor, fetching upstream source or compiling, Forge checks the renderer rev
 exact COSMIC package versions, launcher ownership and binary checksum.
 Package queries and launcher guards use pacman, rpm or dpkg-query as appropriate.
 Pop snapshot packages can be matched by their pinned compositor commit. A matching
-installation finishes immediately without rebuilding or rewriting its files.
+installation reuses its compositor binary and also checks login-shell PATH setup.
+The installer probes the account's Bash, Zsh, Fish or POSIX login shell with a
+clean PATH, then adds a backed-up, marked profile block only if needed to select
+the Forge launcher. This also repairs installations made before PATH setup was
+supported. The profile and installation writes roll back together if verification
+fails. Restore removes the recorded blocks while preserving other profile edits.
 
 A missing, incompatible or damaged engine release leaves the installed renderer
 unchanged. Restore uses an embedded recovery helper and needs no internet. Both
@@ -393,7 +398,7 @@ renderer and uses the previous compositor. Set `COSMIC_FORGE_ENGINE_TARGET` to a
 existing compatible Cargo target cache to reuse build artifacts.
 
 After that engine is installed and the session restarted, importing or updating
-compatible glass packs needs neither rebuilding nor signing out. Forge reports
+compatible glass packs needs neither rebuilding nor logging out. Forge reports
 when the current session has an older engine. See `engine/README.md` for building
 and isolated testing. The app installation helper never changes desktop launchers; the renderer is
 installed only when the user invokes its separate action in Forge settings.

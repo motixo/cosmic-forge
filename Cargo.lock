@@ -996,6 +996,7 @@ dependencies = [
  "cosmic-theme",
  "libcosmic",
  "ron 0.12.2",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2",

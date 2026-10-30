@@ -86,7 +86,7 @@ def main():
             session.key('Escape')
             assert same(community, session.capture('about-closed'))
             # Imported shaders can still be removed while their engine is unavailable.
-            session.click(400, 316)
+            session.click(400, 337)
             assert not (session.path / 'data/cosmic-forge/packs/prism-demo.json').exists()
             assert (session.path / 'data/cosmic-forge/packs/prism-demo.previous').exists()
             assert preferences(session) == before

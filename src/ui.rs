@@ -80,8 +80,7 @@ pub struct Forge {
     update_report: updates::Report,
     expanded_notes: [bool; 3],
     theme_dirty: bool,
-    status: &'static str,
-    engine_note: Option<&'static str>,
+    engine_status: store::EngineStatus,
     updates: Option<std::sync::mpsc::Receiver<updates::Report>>,
     engine_transfer: Option<std::sync::mpsc::Receiver<EngineEvent>>,
     engine_progress: Option<engine::Progress>,
@@ -265,7 +264,11 @@ impl Forge {
             .spacing(16)
             .push(text::heading("Compositor"))
             .push(install)
-            .push(restore);
+            .push(restore)
+            .push(text::body(self.engine_status.label()));
+        if let Some(note) = self.engine_status.note() {
+            content = content.push(text::body(note));
+        }
         if let Some(progress) = self.engine_progress {
             let mut bar = widget::progress_bar::linear::Linear::new()
                 .width(Length::Fill)
@@ -304,8 +307,16 @@ impl Forge {
                     ))
                     .push(button::suggested("Apply effect").on_press(Message::ApplyEffect))
             } else {
+                let note = if matches!(
+                    self.engine_status.state,
+                    store::EngineState::NotInstalled | store::EngineState::InstallationInvalid
+                ) {
+                    self.engine_status.note().unwrap()
+                } else {
+                    "This effect requires a newer compositor engine. Install / update it in Settings, then log out and back in."
+                };
                 content
-                    .push(text::body("Install or update the compositor engine in Settings, then sign out and back in to use this effect."))
+                    .push(text::body(note))
                     .push(button::suggested("Go to settings").on_press(Message::EngineSettings))
             };
             if effect.pack_id.is_some() {
@@ -407,7 +418,7 @@ impl Forge {
                 settings::section().title("Patches").add(
                     widget::column::with_capacity(4)
                         .spacing(24)
-                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install the prebuilt compositor, then sign out and back in."))
+                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install the prebuilt compositor, then log out and back in."))
                         .push(self.compositor_view()),
                 ),
             )
@@ -505,7 +516,7 @@ impl cosmic::Application for Forge {
                 .data(Page::Effect(index));
         }
         nav.activate_position(index as u16);
-        let (status, engine_note) = store::engine_status();
+        let engine_status = store::engine_status();
         let mut app = Self {
             core,
             nav,
@@ -524,8 +535,7 @@ impl cosmic::Application for Forge {
             update_report: updates::Report::default(),
             expanded_notes: [false; 3],
             theme_dirty: false,
-            status,
-            engine_note,
+            engine_status,
             updates: None,
             engine_transfer: None,
             engine_progress: None,
@@ -642,22 +652,21 @@ impl cosmic::Application for Forge {
         {
             return None;
         }
-        let runtime_note = (matches!(self.page, Page::Effect(index) if self.effects[index].shader.is_some()) && !packs::engine_active())
-            .then_some("This glass pack needs Forge renderer ABI 1. Install the new engine and sign in again.");
-        let native =
-            matches!(self.page, Page::Effect(index) if self.effects[index].id == "frosted");
+        let native = matches!(self.page, Page::Effect(index)
+            if self.effects[index].id == "frosted"
+                && self.store.backdrop(&self.effects[index]) == Backdrop::Scene);
         let message = self
             .error
             .as_deref()
             .or(if native {
                 None
             } else {
-                runtime_note.or(self.engine_note)
+                self.engine_status.note()
             })
             .unwrap_or(if native {
                 "Live on your desktop"
             } else {
-                self.status
+                self.engine_status.label()
             });
         Some(
             widget::container(text::caption(message))
@@ -836,7 +845,7 @@ impl cosmic::Application for Forge {
                             || (self.state.automatic_updates && !report.releases.is_empty()));
                     self.expanded_notes = [false; 3];
                     self.update_report = report;
-                    (self.status, self.engine_note) = store::engine_status();
+                    self.engine_status = store::engine_status();
                     if let Err(e) = self.reload_effects() {
                         self.error = Some(format!("{e:#}"));
                     }
@@ -858,7 +867,7 @@ impl cosmic::Application for Forge {
                     match result {
                         Ok(note) => {
                             self.renderer_note = note;
-                            (self.status, self.engine_note) = store::engine_status();
+                            self.engine_status = store::engine_status();
                             if let Err(e) = self.reload_effects() {
                                 self.error = Some(format!("{e:#}"));
                             }
@@ -906,6 +915,7 @@ impl cosmic::Application for Forge {
                         self.sync_selection();
                         self.theme_dirty |= theme_changed;
                     }
+                    self.engine_status = store::engine_status();
                     self.polled = Instant::now();
                 }
             }
@@ -959,8 +969,10 @@ impl cosmic::Application for Forge {
                                 "Bundled".into()
                             }
                         });
-                    self.about_details =
-                        format!("Version {VERSION}\nEngine: {compositor}\nShader pack: {shaders}");
+                    self.about_details = format!(
+                        "Version {VERSION}\nEngine: {compositor}\nSession: {}\nShader pack: {shaders}",
+                        self.engine_status.label()
+                    );
                 }
                 self.about = show;
             }

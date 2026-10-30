@@ -36,17 +36,6 @@ pub fn fingerprint(data_root: &Path) -> u64 {
     hash.finish()
 }
 
-pub fn engine_active() -> bool {
-    let path = xdg("XDG_RUNTIME_DIR", ".cache").join("cosmic-forge-engine-v1");
-    let Ok(text) = fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(pid) = text.trim().parse::<u32>() else {
-        return false;
-    };
-    fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|s| s.trim() == "cosmic-comp")
-}
-
 pub const REPOSITORY: &str = "motixo/cosmic-forge-shaders";
 pub const ASSET: &str = "cosmic-forge-glass.json";
 pub const MAX_PACK: u64 = 2 * 1024 * 1024;

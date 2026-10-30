@@ -12,7 +12,7 @@ For Ubuntu/Pop!_OS, Fedora and Arch Linux. Requires COSMIC, Python 3.11+ and cur
 curl -fsSL https://raw.githubusercontent.com/motixo/cosmic-forge/main/install.sh | sh
 ```
 
-Install the compositor from **Settings → Patches**, then sign out and back in.
+Install the compositor from **Settings → Patches**, then log out and back in.
 
 [Native packages](https://github.com/motixo/cosmic-forge/releases/latest) · [Create and import shaders](docs/adding-effects.md)
 
