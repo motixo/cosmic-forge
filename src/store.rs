@@ -71,6 +71,7 @@ pub struct Fingerprint {
     pub categories: Vec<bool>,
     pub material: [i32; 2],
     pub backdrops: Vec<Backdrop>,
+    pub animations: Vec<bool>,
 }
 
 #[derive(Debug)]
@@ -291,7 +292,7 @@ impl Store {
             id: effect.id.clone(),
             base: shader.base.clone(),
             source: shader.source.clone(),
-            animated: shader.animated,
+            animated: self.animated(effect),
             backdrop: self.backdrop(effect),
             parameters: shader
                 .uniforms
@@ -324,6 +325,46 @@ impl Store {
         self.root
             .join("cosmic-forge/backdrops")
             .join(format!("{}.json", effect.id))
+    }
+
+    fn animation_path(&self, effect: &Effect) -> PathBuf {
+        self.root
+            .join("cosmic-forge/animations")
+            .join(format!("{}.json", effect.id))
+    }
+
+    pub fn animated(&self, effect: &Effect) -> bool {
+        effect.shader.as_ref().is_some_and(|s| s.animated)
+            && fs::read(self.animation_path(effect))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or(true)
+    }
+
+    pub fn set_animation(&mut self, effect: &Effect, animated: bool) -> Result<bool> {
+        effect.validate()?;
+        anyhow::ensure!(
+            effect.shader.as_ref().is_some_and(|s| s.animated),
+            "This effect has no animation"
+        );
+        let mut changes = Changes::from([(
+            self.animation_path(effect),
+            Some(serde_json::to_vec(&animated)?),
+        )]);
+        if self.selected() == effect.id {
+            let text = fs::read_to_string(self.comp.join("forge_runtime"))?;
+            let mut runtime: RuntimeEffect = ron::from_str(&text)?;
+            anyhow::ensure!(
+                runtime.valid() && runtime.id == effect.id,
+                "The active shader changed"
+            );
+            runtime.animated = animated;
+            changes.insert(
+                self.comp.join("forge_runtime"),
+                Some(ron::to_string(&runtime)?.into_bytes()),
+            );
+        }
+        self.commit(changes)
     }
 
     pub fn backdrop(&self, effect: &Effect) -> Backdrop {
@@ -381,6 +422,7 @@ impl Store {
         effect.validate()?;
         let mut changes = self.controls_changes(effect.controls.iter().map(|c| (c, &c.default)))?;
         changes.insert(self.backdrop_path(effect), None);
+        changes.insert(self.animation_path(effect), None);
         if self.selected() == effect.id {
             let default = effect
                 .shader
@@ -403,6 +445,7 @@ impl Store {
                     "The active shader changed"
                 );
                 runtime.backdrop = default;
+                runtime.animated = effect.shader.as_ref().is_some_and(|s| s.animated);
                 changes.insert(path, Some(ron::to_string(&runtime)?.into_bytes()));
             }
         }
@@ -489,6 +532,7 @@ impl Store {
     pub fn fingerprint(&self, effects: &[Effect]) -> Fingerprint {
         Fingerprint {
             backdrops: effects.iter().map(|e| self.backdrop(e)).collect(),
+            animations: effects.iter().map(|e| self.animated(e)).collect(),
             material: [
                 crate::material::strength(self),
                 crate::material::opacity(self),

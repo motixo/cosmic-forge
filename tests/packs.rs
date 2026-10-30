@@ -386,6 +386,55 @@ fn animated_shaders_import_and_preserve_legacy_static_runtime() {
 }
 
 #[test]
+fn animation_switch_persists_without_affecting_static_effects_or_other_controls() {
+    let temp = tempfile::tempdir().unwrap();
+    let files = pair(&temp.path().join("input"));
+    let mut definition: serde_json::Value =
+        serde_json::from_slice(&fs::read(&files[0]).unwrap()).unwrap();
+    definition["effects"][0]["shader"]["animated"] = json!(true);
+    fs::write(&files[0], serde_json::to_vec(&definition).unwrap()).unwrap();
+    let data = temp.path().join("data");
+    packs::import_files(&data, &files).unwrap();
+    let effects = catalog::load(&data.join("effects")).unwrap();
+    let effect = &effects[3];
+    let mut store = Store::new(temp.path().join("config"), temp.path().join("state"));
+    let runtime = |store: &Store| -> RuntimeEffect {
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap()
+    };
+    assert!(store.animated(effect));
+    store.select_effect(effect).unwrap();
+    store.set_control(&effect.controls[0], &json!(72)).unwrap();
+    store.set_animation(effect, false).unwrap();
+    assert!(!store.animated(effect) && !runtime(&store).animated);
+    assert_eq!(runtime(&store).parameters[0].value, 72.0);
+    store.set_control(&effect.controls[0], &json!(64)).unwrap();
+    assert!(!runtime(&store).animated);
+    store.select_effect(&effects[2]).unwrap();
+    let before = fs::read(store.comp.join("forge_runtime")).ok();
+    assert!(!store.animated(&effects[2]));
+    assert!(store.set_animation(&effects[2], true).is_err());
+    store.set_animation(effect, true).unwrap();
+    assert_eq!(fs::read(store.comp.join("forge_runtime")).ok(), before);
+    store.undo().unwrap();
+    store.select_effect(effect).unwrap();
+    assert!(!runtime(&store).animated);
+    store.reset(effect).unwrap();
+    assert!(runtime(&store).animated && store.animated(effect));
+    store.undo().unwrap();
+    assert!(!runtime(&store).animated && !store.animated(effect));
+    store.set_animation(effect, true).unwrap();
+    assert!(runtime(&store).animated);
+    let saved = Store::new(store.root.clone(), temp.path().join("state"));
+    assert!(saved.animated(effect));
+    fs::write(
+        store.root.join("cosmic-forge/animations/prism.json"),
+        "broken",
+    )
+    .unwrap();
+    assert!(store.animated(effect));
+}
+
+#[test]
 fn backdrop_defaults_overrides_and_renderer_requirements_cover_every_base() {
     use cosmic_forge::runtime::Backdrop;
     let temp = tempfile::tempdir().unwrap();

@@ -34,6 +34,7 @@ enum Page {
 pub enum Message {
     Value(usize, Value),
     Backdrop(usize),
+    Animation(bool),
     Flush,
     Engine(engine::Action),
     Settings,
@@ -323,6 +324,12 @@ impl Forge {
             return content.into();
         }
         let mut section = settings::section().title("Appearance");
+        if effect.shader.as_ref().is_some_and(|s| s.animated) {
+            section = section.add(
+                settings::item::builder("Animation")
+                    .toggler(self.store.animated(effect), Message::Animation),
+            );
+        }
         for (i, control) in effect.controls.iter().enumerate() {
             match control.kind {
                 ControlKind::Boolean => {
@@ -711,6 +718,16 @@ impl cosmic::Application for Forge {
                     let control = self.effects[effect].controls[index].clone();
                     self.pending.insert(control.key.clone(), (control, value));
                     self.changed = Instant::now();
+                }
+            }
+            Message::Animation(animated) => {
+                if self.flush()
+                    && let Page::Effect(effect) = self.page
+                    && store::effect_available(&self.effects[effect])
+                    && self.store.selected() == self.effects[effect].id
+                {
+                    let result = self.store.set_animation(&self.effects[effect], animated);
+                    self.report(result);
                 }
             }
             Message::Backdrop(index) => {
