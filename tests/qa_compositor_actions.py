@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Check compositor actions during a stalled startup update in private XDG."""
+"""Check compositor actions during a stalled background update in private XDG."""
 import argparse
 import hashlib
 import json
@@ -45,7 +45,8 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             'install.py': worker, 'build.py': '', 'recovery.py': '',
             'release.json': '{"abi":1,"renderer_revision":2}'}}).encode()
         url = 'https://github.com/motixo/cosmic-forge-engine/releases/download/engine-ui-actions/cosmic-forge-engine.json'
-        metadata = {'tag_name': 'engine-ui-actions', 'assets': [{'name': 'cosmic-forge-engine.json',
+        metadata = {'tag_name': 'engine-ui-actions',
+            'html_url': 'https://github.com/motixo/cosmic-forge-engine/releases/tag/engine-ui-actions', 'assets': [{'name': 'cosmic-forge-engine.json',
             'size': len(bundle), 'digest': 'sha256:' + hashlib.sha256(bundle).hexdigest(), 'browser_download_url': url}]}
         (fixture / 'bundle.json').write_bytes(bundle)
         (fixture / 'release.json').write_text(json.dumps(metadata))
@@ -65,8 +66,7 @@ print('FORGE_PROGRESS:already_installed',flush=True)
                         "Path(sys.argv[sys.argv.index('--output')+1]).write_bytes((root/source).read_bytes())\n"
                         "sys.stdout.write('200')\n")
         curl.chmod(0o755)
-        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}), \
-             patch('qa_native.time.time', return_value=0):
+        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}):
             session = Session(args.binary.resolve(), fixture / 'session', with_engine=False)
         try:
             session.window.configure(height=1000)
@@ -74,7 +74,11 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             time.sleep(.3)
             state = session.path / 'state/cosmic-forge'
             audit = state / 'action-audit.jsonl'
-            assert (fixture / 'update-started').exists(), 'Startup did not check for updates'
+            session.click(816, 24)
+            deadline = time.monotonic() + 5
+            while not (fixture / 'update-started').exists() and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert (fixture / 'update-started').exists(), 'Header did not check for updates'
             launcher = Path(session.environment['HOME']) / '.local/bin/cosmic-comp'
             launcher.parent.mkdir(parents=True, exist_ok=True)
             launcher.write_text('#!/bin/sh\n# Managed by cosmic-crystal\nexit 77\n')
@@ -92,7 +96,7 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             deadline = time.monotonic() + 5
             while launcher.exists() and time.monotonic() < deadline:
                 time.sleep(.1)
-            assert not launcher.exists(), 'Offline Restore waited for the startup network request'
+            assert not launcher.exists(), 'Offline Restore waited for the background network request'
             assert all(p.read_bytes() == data for p, data in preserved.items())
             time.sleep(.3)
             for index in (1, 2):
@@ -137,10 +141,10 @@ print('FORGE_PROGRESS:already_installed',flush=True)
             assert not ImageChops.difference(error.crop((320, 586, 1008, 900)),
                                             after.crop((320, 586, 1008, 900))).getbbox(), 'Update completion replaced the compositor error'
             (artifacts / 'results.json').write_text(json.dumps({'install_downloads': True, 'build_removed': True,
-                'same_release_tag': True, 'restore_during_startup_update': True,
-                'install_during_startup_update': True, 'no_duplicate_installer': True,
+                'same_release_tag': True, 'restore_during_background_update': True,
+                'install_during_background_update': True, 'no_duplicate_installer': True,
                 'update_preserves_compositor_error': True}, indent=2) + '\n')
-            print('PASS Restore and Install during a stalled startup update; single installer; independent errors and progress')
+            print('PASS Restore and Install during a stalled background update; single installer; independent errors and progress')
         finally:
             (fixture / 'release-update').touch()
             session.close()

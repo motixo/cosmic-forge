@@ -12,6 +12,7 @@ use cosmic_forge::{
     engine, packs,
     runtime::Backdrop,
     store::{self, Fingerprint, Store, xdg},
+    updates,
 };
 use serde_json::{Value, json};
 use std::{
@@ -42,7 +43,10 @@ pub enum Message {
     Reset,
     About(bool),
     Repository,
-    DismissEngineUpdate,
+    DismissUpdates,
+    AutomaticUpdates(bool),
+    ToggleChangelog(usize),
+    OpenAppRelease,
     EngineSettings,
     Folder,
     Import,
@@ -73,11 +77,13 @@ pub struct Forge {
     about: bool,
     about_details: String,
     engine_update: bool,
-    show_engine_update: bool,
+    show_update_dialog: bool,
+    update_report: updates::Report,
+    expanded_notes: [bool; 3],
     theme_dirty: bool,
     status: &'static str,
     engine_note: Option<&'static str>,
-    updates: Option<std::sync::mpsc::Receiver<(String, Option<bool>)>>,
+    updates: Option<std::sync::mpsc::Receiver<updates::Report>>,
     engine_transfer: Option<std::sync::mpsc::Receiver<EngineEvent>>,
     engine_progress: Option<engine::Progress>,
     renderer_note: String,
@@ -125,32 +131,19 @@ impl Forge {
         }
         self.reload_effects()
     }
-    fn check_updates(&mut self) {
+    fn check_updates(&mut self, manual: bool) {
         if self.updates.is_some() || self.engine_transfer.is_some() {
             return;
         }
         self.engine_progress = None;
+        self.show_updates = manual;
+        self.show_update_dialog = false;
         self.checked = Instant::now();
-        self.update_note = "Checking shaders and compositor…".into();
+        self.update_note = "Checking app, engine and shader updates…".into();
         let (sender, receiver) = std::sync::mpsc::channel();
         self.updates = Some(receiver);
         std::thread::spawn(move || {
-            let effects = match packs::update(&packs::root()) {
-                Ok(note) => format!("effects: {note}"),
-                Err(e) => format!("effects: {e:#}"),
-            };
-            let (engine, available) = match engine::update_available() {
-                Ok(available) => {
-                    let note = if !available {
-                        "Engine: no updates available"
-                    } else {
-                        "Engine update available · open Settings to update"
-                    };
-                    (note.to_owned(), Some(available))
-                }
-                Err(e) => (format!("Engine: {e:#}"), None),
-            };
-            let _ = sender.send((format!("{effects}\n{engine}"), available));
+            let _ = sender.send(updates::check(&packs::root()));
         });
     }
     fn start_engine(&mut self, action: engine::Action) {
@@ -158,7 +151,7 @@ impl Forge {
             return;
         }
         self.show_updates = false;
-        self.show_engine_update = false;
+        self.show_update_dialog = false;
         self.engine_update = false;
         self.engine_progress = Some(engine::Progress::Checking);
         self.renderer_note.clear();
@@ -414,6 +407,61 @@ impl Forge {
                         .push(self.compositor_view()),
                 ),
             )
+            .push(
+                settings::section().title("Updates")
+                    .add(settings::item::builder("Automatic update reminders")
+                        .toggler(self.state.automatic_updates, Message::AutomaticUpdates))
+                    .add(text::caption("Check the app, engine and shaders on startup and every hour. Shader updates install automatically.")),
+            )
+            .into()
+    }
+
+    fn updates_dialog(&self) -> Element<'_, Message> {
+        let mut content = widget::column::with_capacity(4).spacing(20);
+        for (index, release) in self.update_report.releases.iter().enumerate() {
+            let mut section = settings::section().title(format!(
+                "{} · {}",
+                release.component.name(),
+                release.tag
+            ));
+            let action: Element<'_, Message> = match release.component {
+                updates::Component::App => button::suggested("Open release page")
+                    .on_press(Message::OpenAppRelease)
+                    .into(),
+                updates::Component::Engine => button::suggested("Go to Patches")
+                    .on_press(Message::EngineSettings)
+                    .into(),
+                updates::Component::Shaders => text::body(if release.installed {
+                    "Updated automatically"
+                } else {
+                    "Could not update automatically. Check the details below and try again."
+                })
+                .into(),
+            };
+            section = section.add(action).add(
+                button::text("Changelog")
+                    .leading_icon(widget::icon::from_name(if self.expanded_notes[index] {
+                        "pan-down-symbolic"
+                    } else {
+                        "pan-end-symbolic"
+                    }))
+                    .on_press(Message::ToggleChangelog(index)),
+            );
+            if self.expanded_notes[index] {
+                section = section.add(text::body(if release.notes.is_empty() {
+                    "No changelog was provided for this release."
+                } else {
+                    release.notes.as_str()
+                }));
+            }
+            content = content.push(section);
+        }
+        content = content.push(text::caption(self.update_note.as_str()));
+        widget::dialog()
+            .title("Updates")
+            .control(widget::container(widget::scrollable(content)).max_height(420))
+            .width(620)
+            .primary_action(button::suggested("Close").on_press(Message::DismissUpdates))
             .into()
     }
 }
@@ -475,7 +523,9 @@ impl cosmic::Application for Forge {
             about: false,
             about_details: String::new(),
             engine_update: false,
-            show_engine_update: false,
+            show_update_dialog: false,
+            update_report: updates::Report::default(),
+            expanded_notes: [false; 3],
             theme_dirty: false,
             status,
             engine_note,
@@ -489,8 +539,8 @@ impl cosmic::Application for Forge {
             catalog_stamp: packs::fingerprint(&packs::root()),
         };
         app.set_header_title("COSMIC Forge".into());
-        if packs::due(&packs::root()) {
-            app.check_updates();
+        if app.state.automatic_updates {
+            app.check_updates(false);
         }
         let task = app.set_window_title("COSMIC Forge".into(), app.core.main_window_id().unwrap());
         (app, task)
@@ -584,7 +634,7 @@ impl cosmic::Application for Forge {
                     .into(),
             );
         }
-        if self.error.is_none() && self.engine_update && !self.show_engine_update {
+        if self.error.is_none() && self.engine_update && !self.show_update_dialog {
             return Some(
                 widget::container(
                     widget::row::with_capacity(2)
@@ -633,10 +683,8 @@ impl cosmic::Application for Forge {
         )
     }
     fn dialog(&self) -> Option<Element<'_, Message>> {
-        if self.show_engine_update && self.engine_update {
-            return Some(widget::dialog().title("Engine update available").body("A compositor update is available. Install / update it in Settings, then sign out and back in to activate it.")
-                .primary_action(button::suggested("Go to settings").on_press(Message::EngineSettings))
-                .secondary_action(button::standard("Later").on_press(Message::DismissEngineUpdate)).into());
+        if self.show_update_dialog {
+            return Some(self.updates_dialog());
         }
         self.about.then(|| {
             widget::dialog()
@@ -653,7 +701,7 @@ impl cosmic::Application for Forge {
     }
     fn on_escape(&mut self) -> Task<Message> {
         self.about = false;
-        self.show_engine_update = false;
+        self.show_update_dialog = false;
         Task::none()
     }
     fn on_app_exit(&mut self) -> Option<Message> {
@@ -691,7 +739,37 @@ impl cosmic::Application for Forge {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::DismissEngineUpdate => self.show_engine_update = false,
+            Message::DismissUpdates => self.show_update_dialog = false,
+            Message::AutomaticUpdates(enabled) => {
+                let result = self.store.set_automatic_updates(enabled);
+                if self.report(result) {
+                    if enabled {
+                        self.check_updates(false);
+                    } else {
+                        self.show_update_dialog = false;
+                    }
+                }
+            }
+            Message::ToggleChangelog(index) => {
+                if let Some(expanded) = self.expanded_notes.get_mut(index) {
+                    *expanded = !*expanded;
+                }
+            }
+            Message::OpenAppRelease => {
+                if let Some(release) = self
+                    .update_report
+                    .releases
+                    .iter()
+                    .find(|release| release.component == updates::Component::App)
+                {
+                    let result = std::process::Command::new("xdg-open")
+                        .arg(&release.url)
+                        .spawn()
+                        .map(|_| ())
+                        .map_err(Into::into);
+                    self.report(result);
+                }
+            }
             Message::Repository => {
                 let result = std::process::Command::new("xdg-open")
                     .arg("https://github.com/motixo/cosmic-forge")
@@ -702,7 +780,7 @@ impl cosmic::Application for Forge {
             }
             Message::EngineSettings => {
                 if self.flush() {
-                    self.show_engine_update = false;
+                    self.show_update_dialog = false;
                     self.show_updates = false;
                     if !matches!(self.page, Page::Settings) {
                         self.settings_return = self.page;
@@ -753,19 +831,26 @@ impl cosmic::Application for Forge {
                 self.flush();
             }
             Message::Tick => {
-                if let Some((note, available)) =
-                    self.updates.as_ref().and_then(|r| r.try_recv().ok())
-                {
+                if let Some(mut report) = self.updates.as_ref().and_then(|r| r.try_recv().ok()) {
                     self.updates = None;
-                    self.update_note = note;
+                    self.update_note = report.messages.join("\n");
                     self.checked = Instant::now();
                     // A compositor action supersedes the check that was already running.
                     if self.engine_progress.is_none()
-                        && let Some(available) = available
+                        && let Some(available) = report.engine_available
                     {
-                        self.show_engine_update = self.show_updates && available;
                         self.engine_update = available;
                     }
+                    if self.engine_progress.is_some() {
+                        report
+                            .releases
+                            .retain(|release| release.component != updates::Component::Engine);
+                    }
+                    self.show_update_dialog = self.engine_transfer.is_none()
+                        && (self.show_updates
+                            || (self.state.automatic_updates && !report.releases.is_empty()));
+                    self.expanded_notes = [false; 3];
+                    self.update_report = report;
                     (self.status, self.engine_note) = store::engine_status();
                     if let Err(e) = self.reload_effects() {
                         self.error = Some(format!("{e:#}"));
@@ -800,8 +885,8 @@ impl cosmic::Application for Forge {
                         }
                     }
                 }
-                if self.checked.elapsed() >= Duration::from_secs(packs::CHECK_INTERVAL) {
-                    self.check_updates();
+                if updates::due(self.state.automatic_updates, self.checked.elapsed()) {
+                    self.check_updates(false);
                 }
                 if !self.pending.is_empty() && self.changed.elapsed() >= Duration::from_millis(180)
                 {
@@ -902,8 +987,7 @@ impl cosmic::Application for Forge {
                 self.report(result);
             }
             Message::CheckUpdates => {
-                self.show_updates = true;
-                self.check_updates();
+                self.check_updates(true);
             }
             Message::Import => {
                 return cosmic::task::future(async {

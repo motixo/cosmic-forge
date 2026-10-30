@@ -64,6 +64,7 @@ struct Edit {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
+    pub automatic_updates: bool,
     pub selected: String,
     pub dark: bool,
     pub accent: String,
@@ -115,6 +116,20 @@ impl Store {
         fs::read_to_string(path)
             .map(|v| v.trim().to_owned())
             .unwrap_or_else(|_| fallback.to_owned())
+    }
+
+    pub fn automatic_updates(&self) -> bool {
+        Self::text(
+            &self.root.join("cosmic-forge/automatic-updates.json"),
+            "false",
+        ) == "true"
+    }
+
+    pub fn set_automatic_updates(&mut self, enabled: bool) -> Result<bool> {
+        self.commit(Changes::from([(
+            self.root.join("cosmic-forge/automatic-updates.json"),
+            Some(serde_json::to_vec(&enabled)?),
+        )]))
     }
 
     pub fn selected(&self) -> String {
@@ -531,6 +546,7 @@ impl Store {
 
     pub fn fingerprint(&self, effects: &[Effect]) -> Fingerprint {
         Fingerprint {
+            automatic_updates: self.automatic_updates(),
             backdrops: effects.iter().map(|e| self.backdrop(e)).collect(),
             animations: effects.iter().map(|e| self.animated(e)).collect(),
             material: [

@@ -47,6 +47,26 @@ fn opening_and_reading_is_read_only() {
     assert!(!f.store.root.exists());
     assert!(!f._temp.path().join("state").exists());
 }
+
+#[test]
+fn automatic_update_reminders_are_opt_in_persistent_and_separate_from_effects() {
+    let mut f = Fixture::new();
+    assert!(!f.store.automatic_updates());
+    f.store.set_automatic_updates(true).unwrap();
+    assert!(f.store.automatic_updates());
+    assert!(f.store.fingerprint(&f.effects).automatic_updates);
+    assert!(!f.store.comp.exists());
+    let mut reopened = Store::new(f.store.root.clone(), f._temp.path().join("reopened-state"));
+    assert!(reopened.automatic_updates());
+    reopened.set_automatic_updates(false).unwrap();
+    assert!(!f.store.automatic_updates());
+    fs::write(
+        f.store.root.join("cosmic-forge/automatic-updates.json"),
+        "broken",
+    )
+    .unwrap();
+    assert!(!f.store.automatic_updates());
+}
 #[test]
 fn selection_preserves_crystal_and_undo_restores_absence() {
     let mut f = Fixture::new();

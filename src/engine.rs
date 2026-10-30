@@ -165,8 +165,11 @@ pub fn update_available() -> Result<bool> {
         "https://api.github.com/repos/{REPOSITORY}/releases/latest"
     ))?;
     ensure!(status == 200, "No engine release has been published yet");
+    update_available_from_release(&metadata)
+}
+pub fn update_available_from_release(metadata: &[u8]) -> Result<bool> {
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
-    let root = prepare_from_release(&cache, &metadata, |url| {
+    let root = prepare_from_release(&cache, metadata, |url| {
         let (status, bytes) = crate::packs::download(url)?;
         ensure!(status == 200, "The engine package is unavailable");
         Ok(bytes)
@@ -178,7 +181,7 @@ pub fn update_available() -> Result<bool> {
         .context("Missing engine package hash")?;
     let available = update_needed(&state, bundle)?;
     if !available {
-        let metadata: serde_json::Value = serde_json::from_slice(&metadata)?;
+        let metadata: serde_json::Value = serde_json::from_slice(metadata)?;
         if let Some(tag) = metadata["tag_name"].as_str() {
             remember_release(&state, bundle, tag)?;
         }
