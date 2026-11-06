@@ -278,6 +278,7 @@ def exercise(session):
     check('Imported glass appears in the sidebar without reopening Forge', session.get('glass_effect') == '"prism"')
     check('Selecting the imported effect sends shader source to the renderer',
           'forge_prism_amount' in session.get('forge_runtime'))
+    session.scroll_to_bottom()
     session.capture('cosmic-forge-community')
     session.click(380, 750)
     check('Removing the active imported effect selects Frosted Glass', session.get('glass_effect') == '"frosted"')
