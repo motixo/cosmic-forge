@@ -9,7 +9,7 @@ use cosmic::{
 use cosmic_forge::{
     APP_ID, VERSION,
     catalog::{self, Control, ControlKind, Effect},
-    engine, packs,
+    engine, noise, packs,
     runtime::Backdrop,
     store::{self, Fingerprint, Store, xdg},
     updates,
@@ -333,6 +333,15 @@ impl Forge {
             );
         }
         for (i, control) in effect.controls.iter().enumerate() {
+            if control.key == noise::KEY && effect.shader.is_none() && !store::renderer_available(2)
+            {
+                section = section.add(
+                    settings::item::builder("Noise")
+                        .description("Install the Forge engine in Settings to add surface grain.")
+                        .control(text::body("Requires Forge")),
+                );
+                continue;
+            }
             let mut item = settings::item::builder(control.label.as_str());
             if !control.description.trim().is_empty() {
                 item = item.description(control.description.as_str());
@@ -488,7 +497,7 @@ impl cosmic::Application for Forge {
     }
     fn init(core: Core, _: Flags) -> (Self, Task<Message>) {
         let folder = xdg("XDG_DATA_HOME", ".local/share").join("cosmic-forge/effects");
-        let (effects, mut error) = match catalog::load(&folder) {
+        let (mut effects, mut error) = match catalog::load(&folder) {
             Ok(effects) => (effects, None),
             Err(error) => (
                 serde_json::from_str(include_str!("../shaders/effects.json"))
@@ -496,11 +505,15 @@ impl cosmic::Application for Forge {
                 Some(format!("Could not load extra effects: {error:#}")),
             ),
         };
+        for effect in &mut effects {
+            noise::add_control(effect);
+        }
         let mut store = Store::default();
-        if let Some(effect) = effects
-            .iter()
-            .find(|e| e.id == store.selected() && e.shader.is_some() && store::effect_available(e))
-            && let Err(e) = store.select_effect(effect)
+        if let Some(effect) = effects.iter().find(|e| {
+            e.id == store.selected()
+                && (e.shader.is_some() || store::renderer_available(2))
+                && store::effect_available(e)
+        }) && let Err(e) = store.select_effect(effect)
         {
             error = Some(format!("Could not activate glass pack: {e:#}"));
         }
@@ -907,11 +920,24 @@ impl cosmic::Application for Forge {
                                 self.settings_return = Page::Effect(index);
                             }
                         }
+                        let native_frost_changed = state.selected == "frosted"
+                            && (state.dark != self.state.dark
+                                || state.material[0] != self.state.material[0]);
                         let theme_changed = state.dark != self.state.dark
                             || state.accent != self.state.accent
                             || state.material != self.state.material
                             || state.categories != self.state.categories;
                         self.state = state;
+                        if native_frost_changed
+                            && store::renderer_available(2)
+                            && let Some(effect) = self
+                                .effects
+                                .iter()
+                                .find(|e| e.id == "frosted" && e.shader.is_none())
+                            && let Err(error) = self.store.select_effect(effect)
+                        {
+                            self.error = Some(format!("Could not update Frosted Glass: {error:#}"));
+                        }
                         self.sync_selection();
                         self.theme_dirty |= theme_changed;
                     }

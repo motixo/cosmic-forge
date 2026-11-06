@@ -249,6 +249,9 @@ pub fn load_with_pack(
         }
     }
     crate::packs::merge(&mut effects, &extra.with_file_name("packs"), replacement)?;
+    for effect in &mut effects {
+        crate::noise::add_control(effect);
+    }
     validate_catalog(&effects)?;
     Ok(effects)
 }

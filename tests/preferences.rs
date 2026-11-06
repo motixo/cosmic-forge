@@ -265,14 +265,28 @@ fn booleans_and_identifier_validation() {
 #[test]
 fn opacity_is_shared_across_effects_and_updates_native_glass_surfaces() {
     let mut f = Fixture::new();
-    let control = f.effects[2].controls.last().unwrap().clone();
+    let control = f.effects[2]
+        .controls
+        .iter()
+        .find(|c| c.key == "alpha_map")
+        .unwrap()
+        .clone();
     f.write("crystal_thickness", "88");
     let accent = f.store.theme_path("accent");
     fs::create_dir_all(accent.parent().unwrap()).unwrap();
     fs::write(&accent, "(base: \"#123456FF\")").unwrap();
     f.store.set_control(&control, &json!(25)).unwrap();
     for effect in &f.effects {
-        assert_eq!(f.store.value(effect.controls.last().unwrap()), 25);
+        assert_eq!(
+            f.store.value(
+                effect
+                    .controls
+                    .iter()
+                    .find(|c| c.key == "alpha_map")
+                    .unwrap()
+            ),
+            25
+        );
     }
     for path in f.theme_paths("alpha_map") {
         let map: cosmic_theme::AlphaMap =
@@ -305,7 +319,12 @@ fn opacity_is_shared_across_effects_and_updates_native_glass_surfaces() {
 #[test]
 fn opacity_undo_restores_original_maps_and_removes_new_derived_files() {
     let mut f = Fixture::new();
-    let control = f.effects[2].controls.last().unwrap().clone();
+    let control = f.effects[2]
+        .controls
+        .iter()
+        .find(|c| c.key == "alpha_map")
+        .unwrap()
+        .clone();
     let path = f.store.theme_path("alpha_map");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let original = ron::ser::to_string(&cosmic_theme::AlphaMap::default()).unwrap();
@@ -367,7 +386,12 @@ fn grouped_thickness_and_opacity_keep_derived_colors_consistent() {
 #[test]
 fn opacity_scale_matches_settings_at_ends_and_center() {
     let mut f = Fixture::new();
-    let control = f.effects[2].controls.last().unwrap().clone();
+    let control = f.effects[2]
+        .controls
+        .iter()
+        .find(|c| c.key == "alpha_map")
+        .unwrap()
+        .clone();
     for amount in [0, 50, 100] {
         f.store.set_control(&control, &json!(amount)).unwrap();
         assert_eq!(f.store.value(&control), amount);
@@ -386,7 +410,12 @@ fn opacity_scale_matches_settings_at_ends_and_center() {
 #[test]
 fn malformed_builder_does_not_reset_glass_colors_to_defaults() {
     let mut f = Fixture::new();
-    let control = f.effects[2].controls.last().unwrap().clone();
+    let control = f.effects[2]
+        .controls
+        .iter()
+        .find(|c| c.key == "alpha_map")
+        .unwrap()
+        .clone();
     let builder = f
         .store
         .root

@@ -302,7 +302,8 @@ impl Store {
             self.comp.join("forge_backdrop"),
             Self::backdrop_setting(self.backdrop(effect))?,
         );
-        let runtime = effect.shader.as_ref().map(|shader| RuntimeEffect {
+        let amount = numeric(&self.value(&crate::noise::control()));
+        let mut runtime = effect.shader.as_ref().map(|shader| RuntimeEffect {
             abi: ABI,
             id: effect.id.clone(),
             base: shader.base.clone(),
@@ -327,6 +328,11 @@ impl Store {
                 })
                 .collect(),
         });
+        if let Some(runtime) = &mut runtime {
+            crate::noise::apply(runtime, amount)?;
+        } else {
+            runtime = self.native_noise_runtime(&effect.id, amount, None, self.backdrop(effect))?;
+        }
         changes.insert(
             self.comp.join("forge_runtime"),
             runtime
@@ -334,6 +340,38 @@ impl Store {
                 .transpose()?,
         );
         self.commit(changes)
+    }
+
+    fn native_noise_available(&self, backdrop: Backdrop) -> bool {
+        let revision = if backdrop == Backdrop::Wallpaper {
+            crate::engine::WALLPAPER_RENDERER_REVISION
+        } else {
+            2
+        };
+        installed_engine(
+            self.backup.ancestors().nth(3).expect("Store backup path"),
+            &xdg("HOME", "").join(".local/bin/cosmic-comp"),
+            revision,
+        )
+        .is_some()
+    }
+
+    fn native_noise_runtime(
+        &self,
+        id: &str,
+        amount: f32,
+        thickness: Option<i32>,
+        backdrop: Backdrop,
+    ) -> Result<Option<RuntimeEffect>> {
+        if !self.native_noise_available(backdrop) {
+            return Ok(None);
+        }
+        crate::noise::native_runtime(
+            id,
+            amount,
+            thickness.unwrap_or_else(|| crate::material::strength(self)),
+            backdrop,
+        )
     }
 
     fn backdrop_path(&self, effect: &Effect) -> PathBuf {
@@ -413,7 +451,7 @@ impl Store {
                 self.comp.join("forge_backdrop"),
                 Self::backdrop_setting(backdrop)?,
             );
-            if effect.shader.is_some() {
+            if effect.shader.is_some() || self.comp.join("forge_runtime").is_file() {
                 let text = fs::read_to_string(self.comp.join("forge_runtime"))?;
                 let mut runtime: RuntimeEffect = ron::from_str(&text)?;
                 anyhow::ensure!(
@@ -447,7 +485,11 @@ impl Store {
                 self.comp.join("forge_backdrop"),
                 Self::backdrop_setting(default)?,
             );
-            if effect.shader.is_some() {
+            if effect.shader.is_some()
+                || changes
+                    .get(&self.comp.join("forge_runtime"))
+                    .is_some_and(Option::is_some)
+            {
                 let path = self.comp.join("forge_runtime");
                 let encoded = changes
                     .get(&path)
@@ -477,6 +519,7 @@ impl Store {
             .filter(|r| r.valid() && r.id == self.selected());
         let mut runtime_changed = false;
         let (mut thickness, mut opacity) = (None, None);
+        let mut noise = None;
         for (control, value) in controls {
             control.validate()?;
             let encoded = match control.kind {
@@ -496,6 +539,9 @@ impl Store {
                     thickness = Some(amount);
                 }
             } else {
+                if control.key == crate::noise::KEY {
+                    noise = Some(numeric(&encoded));
+                }
                 if let Some(runtime) = &mut runtime {
                     for parameter in &mut runtime.parameters {
                         if parameter.key == control.key {
@@ -510,10 +556,27 @@ impl Store {
                 );
             }
         }
+        if (noise.is_some() || (self.selected() == "frosted" && thickness.is_some()))
+            && runtime
+                .as_ref()
+                .is_none_or(|r| r.source.contains(crate::noise::NATIVE))
+        {
+            let backdrop = ron::from_str(&Self::text(&self.comp.join("forge_backdrop"), "scene"))
+                .unwrap_or_default();
+            runtime = self.native_noise_runtime(
+                &self.selected(),
+                noise.unwrap_or_else(|| numeric(&self.value(&crate::noise::control()))),
+                thickness,
+                backdrop,
+            )?;
+            runtime_changed = true;
+        }
         if runtime_changed {
             changes.insert(
                 self.comp.join("forge_runtime"),
-                Some(ron::to_string(&runtime.unwrap())?.into_bytes()),
+                runtime
+                    .map(|r| ron::to_string(&r).map(String::into_bytes))
+                    .transpose()?,
             );
         }
         if thickness.is_some() || opacity.is_some() {

@@ -2,6 +2,7 @@
 pub mod catalog;
 pub mod engine;
 mod material;
+pub mod noise;
 pub mod packs;
 #[path = "../engine/runtime.rs"]
 pub mod runtime;
