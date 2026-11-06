@@ -42,7 +42,11 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             "minecraft-glass",
             "void",
             "ember",
-            "snow"
+            "snow",
+            "fluted-glass",
+            "hammered-glass",
+            "chord-glass",
+            "cyberspace"
         ]
     );
     assert!(effects[1..].iter().all(|e| e.shader.is_some()));
@@ -56,6 +60,25 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     assert_eq!(liquid.shader.as_ref().unwrap().base, "glass");
     assert_eq!(liquid.shader.as_ref().unwrap().renderer_revision(), 2);
     let mut store = Store::new(temp.path().join("config"), temp.path().join("state"));
+    let fluted = effects.iter().find(|e| e.id == "fluted-glass").unwrap();
+    store.select_effect(fluted).unwrap();
+    let spacing = fluted
+        .controls
+        .iter()
+        .find(|c| c.key == "forge_fluted_spacing")
+        .unwrap();
+    store.set_control(spacing, &json!(80)).unwrap();
+    let runtime: RuntimeEffect =
+        ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
+    assert_eq!(
+        runtime
+            .parameters
+            .iter()
+            .find(|p| p.name == "forge_fluted_spacing")
+            .unwrap()
+            .value,
+        80.0
+    );
     store.select_effect(liquid).unwrap();
     let runtime: RuntimeEffect =
         ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
@@ -176,7 +199,16 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             .value,
         7.0
     );
-    assert_eq!(store.value(effects[1].controls.last().unwrap()), json!(50));
+    assert_eq!(
+        store.value(
+            effects[1]
+                .controls
+                .iter()
+                .find(|c| c.key == "alpha_map")
+                .unwrap()
+        ),
+        json!(50)
+    );
 }
 
 fn sample() -> Vec<u8> {
