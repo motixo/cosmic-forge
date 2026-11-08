@@ -1,3 +1,1 @@
-- Add a shared **Noise** control to all glass effects, from 0–100% (default 15%).
-- Preserve Frosted Glass blur and transparency when adjusting grain.
-- Support **glass-v10** and the updated Pop!_OS engine.
+- Preserve theme colors when adjusting glass opacity, including older themes and system defaults.
