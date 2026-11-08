@@ -317,6 +317,55 @@ fn opacity_is_shared_across_effects_and_updates_native_glass_surfaces() {
 }
 
 #[test]
+fn opacity_preserves_legacy_theme_colors_and_current_overrides() {
+    use cosmic_config::{Config, CosmicConfigEntry};
+    use cosmic_theme::{Container, ThemeBuilder};
+
+    let mut f = Fixture::new();
+    let control = f.effects[0].controls[1].clone();
+    let mut expected_themes = Vec::new();
+    for (mode, mut builder) in [
+        ("Dark", ThemeBuilder::dark()),
+        ("Light", ThemeBuilder::light()),
+    ] {
+        let name = format!("com.system76.CosmicTheme.{mode}.Builder");
+        let legacy = Config::with_custom_path(&name, 1, f.store.root.clone()).unwrap();
+        builder.bg_color = Some((0.56, 0.53, 0.84, 1.).into());
+        builder.primary_container_bg = Some((0.2, 0.6, 0.4, 1.).into());
+        builder.write_entry(&legacy).unwrap();
+        let current = Config::with_custom_path(&name, 2, f.store.root.clone()).unwrap();
+        if mode == "Dark" {
+            builder
+                .set_bg_color(&current, Some((0.18, 0.33, 0.49, 1.).into()))
+                .unwrap();
+        }
+        expected_themes.push((mode, ThemeBuilder::get_entry(&current).unwrap().build()));
+    }
+
+    f.store.set_control(&control, &json!(70)).unwrap();
+    assert_eq!(f.store.value(&control), 70);
+    for (mode, expected) in expected_themes {
+        let theme_dir = f
+            .store
+            .root
+            .join(format!("cosmic/com.system76.CosmicTheme.{mode}/v2"));
+        for (key, original) in [
+            ("transparent_background", expected.background(true)),
+            ("transparent_primary", expected.primary(true)),
+            ("transparent_secondary", expected.secondary(true)),
+        ] {
+            let surface: Container =
+                ron::from_str(&fs::read_to_string(theme_dir.join(key)).unwrap()).unwrap();
+            assert_eq!(
+                surface.base.color.into_format::<u8>(),
+                original.base.color.into_format::<u8>(),
+                "{mode}/{key}"
+            );
+        }
+    }
+}
+
+#[test]
 fn opacity_undo_restores_original_maps_and_removes_new_derived_files() {
     let mut f = Fixture::new();
     let control = f.effects[2]
