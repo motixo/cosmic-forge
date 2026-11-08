@@ -7,10 +7,15 @@ use cosmic_forge::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::fs;
+use std::{collections::BTreeSet, fs, path::Path};
 
 #[test]
 fn shader_repository_builds_a_pack_compatible_with_forge() {
+    #[derive(serde::Deserialize)]
+    struct Definition {
+        id: String,
+    }
+
     let temp = tempfile::tempdir().unwrap();
     let output = temp.path().join("official.json");
     assert!(
@@ -26,30 +31,47 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             .status
             .success()
     );
+    let bytes = fs::read(output).unwrap();
+    let pack: Pack = serde_json::from_slice(&bytes).unwrap();
+    let mut source_ids: BTreeSet<_> =
+        serde_json::from_str::<Vec<Definition>>(include_str!("../shaders/effects.json"))
+            .unwrap()
+            .into_iter()
+            .map(|definition| definition.id)
+            .collect();
+    let definitions = Path::new(env!("CARGO_MANIFEST_DIR")).join("shaders/effects");
+    for entry in fs::read_dir(definitions).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            let definition: Definition = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            source_ids.insert(definition.id);
+        }
+    }
+    assert_eq!(
+        pack.effects
+            .iter()
+            .map(|e| e.id.clone())
+            .collect::<BTreeSet<_>>(),
+        source_ids
+    );
     let root = temp.path().join("data");
     assert_eq!(packs::installed_revision(&root), None);
-    packs::install(&root, &fs::read(output).unwrap(), true).unwrap();
+    packs::install(&root, &bytes, true).unwrap();
     assert_eq!(packs::installed_revision(&root), Some(1));
     let effects = catalog::load(&root.join("effects")).unwrap();
     assert_eq!(
         effects.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
-        [
-            "frosted",
-            "crystal",
-            "mica",
-            "aero",
-            "liquid-glass",
-            "minecraft-glass",
-            "void",
-            "ember",
-            "snow",
-            "fluted-glass",
-            "hammered-glass",
-            "chord-glass",
-            "cyberspace"
-        ]
+        pack.effects
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect::<Vec<_>>()
     );
-    assert!(effects[1..].iter().all(|e| e.shader.is_some()));
+    assert!(
+        effects
+            .iter()
+            .filter(|e| e.id != "frosted")
+            .all(|e| e.shader.is_some())
+    );
     let mica = effects.iter().find(|e| e.id == "mica").unwrap();
     assert_eq!(mica.shader.as_ref().unwrap().renderer_revision(), 5);
     assert_eq!(
@@ -120,7 +142,7 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     store.set_control(dispersion, &json!(8)).unwrap();
     store.set_control(lensing, &json!(35)).unwrap();
     store.set_control(clear_center, &json!(60)).unwrap();
-    store.select_effect(&effects[2]).unwrap();
+    store.select_effect(mica).unwrap();
     store.select_effect(liquid).unwrap();
     let runtime: RuntimeEffect =
         ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
@@ -172,12 +194,13 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
             .unwrap();
         assert_eq!(store.value(color), json!(amount));
     }
-    store.select_effect(&effects[1]).unwrap();
+    let crystal = effects.iter().find(|e| e.id == "crystal").unwrap();
+    store.select_effect(crystal).unwrap();
     let runtime: RuntimeEffect =
         ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
     assert_eq!(runtime.parameters[0].name, "forge_crystal_color");
     assert_eq!(runtime.parameters[0].value, 61.0);
-    let crystal_dispersion = effects[1]
+    let crystal_dispersion = crystal
         .controls
         .iter()
         .find(|c| c.key == "forge_crystal_dispersion")
@@ -186,7 +209,7 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     store.set_control(crystal_dispersion, &json!(7)).unwrap();
     store.select_effect(liquid).unwrap();
     assert_eq!(store.value(dispersion), json!(8));
-    store.select_effect(&effects[1]).unwrap();
+    store.select_effect(crystal).unwrap();
     assert_eq!(store.value(crystal_dispersion), json!(7));
     let runtime: RuntimeEffect =
         ron::from_str(&fs::read_to_string(store.comp.join("forge_runtime")).unwrap()).unwrap();
@@ -201,7 +224,7 @@ fn shader_repository_builds_a_pack_compatible_with_forge() {
     );
     assert_eq!(
         store.value(
-            effects[1]
+            crystal
                 .controls
                 .iter()
                 .find(|c| c.key == "alpha_map")
