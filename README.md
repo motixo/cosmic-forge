@@ -33,11 +33,11 @@ Install the compositor from **Settings → Patches**, then log out and back in.
   </tr>
   <tr>
     <td align="center"><img src="resources/previews/aero-glass.webp" width="400" alt="Blue glass with soft diagonal reflections"><br><strong>Aero Glass</strong></td>
-    <td align="center"><img src="resources/previews/minecraft-glass.webp" width="400" alt="Pixel reflections on glass over a Minecraft scene"><br><strong>Minecraft Glass</strong></td>
+    <td align="center"><img src="resources/previews/mica.webp" width="400" alt="Matte dark window tinted by a starry wallpaper"><br><strong>Mica</strong></td>
   </tr>
   <tr>
+    <td align="center"><img src="resources/previews/minecraft-glass.webp" width="400" alt="Pixel reflections on glass over a Minecraft scene"><br><strong>Minecraft Glass</strong></td>
     <td align="center"><img src="resources/previews/ember.webp" width="400" alt="Flames rising behind a glass window"><br><strong>Ember</strong></td>
-    <td></td>
   </tr>
 </table>
 
