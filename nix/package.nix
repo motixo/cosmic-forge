@@ -42,7 +42,7 @@ rustPlatform.buildRustPackage {
       ++ map (name: ../engine + "/${name}") engine.bundle_files
     );
   };
-  cargoHash = "sha256-lgRVqfEe4VPOgmvZUXRbq5JFmsH/2o31EX692f8+bGM=";
+  cargoHash = "sha256-HDZAam9sm68cUxldY/Y9LgS9EAx3mEjYxSSHgzoj+Gc=";
 
   nativeBuildInputs = [
     (libcosmicAppHook.override { includeSettings = false; })

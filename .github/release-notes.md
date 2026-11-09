@@ -1,1 +1,1 @@
-- Preserve theme colors when adjusting glass opacity, including older themes and system defaults.
+- Add NixOS support for COSMIC 1.11 with a Nix flake and a system-managed Forge compositor.
