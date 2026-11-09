@@ -2,7 +2,7 @@
 
 ## Import an effect
 
-Install the Forge compositor from **Settings → Patches**, then log out and back in.
+Install the Forge compositor, then log out and back in. [Installation guide](../README.md#install)
 
 Open **Settings → Import effect**. Select one bundled JSON pack, or select one
 JSON settings file and one `.frag` file together. Select the imported effect in

@@ -116,7 +116,7 @@ pub fn due(enabled: bool, elapsed: Duration) -> bool {
     enabled && elapsed >= CHECK_INTERVAL
 }
 
-fn version(tag: &str) -> Result<Vec<u64>> {
+pub(crate) fn version(tag: &str) -> Result<Vec<u64>> {
     let parts = tag
         .strip_prefix('v')
         .unwrap_or(tag)

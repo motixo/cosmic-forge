@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-use crate::store::xdg;
+use crate::{runtime::ABI, store::xdg};
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,9 +12,47 @@ use std::{
 pub const REPOSITORY: &str = "motixo/cosmic-forge-engine";
 pub const ASSET: &str = "cosmic-forge-engine.json";
 pub const WALLPAPER_RENDERER_REVISION: u64 = 5;
+pub const NIXOS_INSTRUCTIONS: &str = "Enable programs.cosmic-forge.enable in your NixOS configuration, rebuild, then log out and back in. Update or remove the compositor through your NixOS configuration.";
+pub(crate) const NIXOS_MANIFEST: &str = "/etc/cosmic-forge/engine.json";
 // Only offline stock recovery is embedded; engine setup uses verified releases.
 const RECOVERY: &str = include_str!("../engine/recovery.py");
 const LOGIN_PATH: &str = include_str!("../engine/login_path.py");
+
+pub fn managed_by_nixos() -> bool {
+    Path::new("/etc/NIXOS").is_file()
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct NixosEngine {
+    abi: u32,
+    pub renderer_revision: u64,
+    pub cosmic_version: String,
+    pub release: String,
+    pub executable: PathBuf,
+}
+
+impl NixosEngine {
+    pub(crate) fn installed() -> Option<Self> {
+        Self::read(Path::new(NIXOS_MANIFEST), Path::new("/nix/store"))
+    }
+
+    fn read(manifest: &Path, store: &Path) -> Option<Self> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let engine: Self = serde_json::from_slice(&fs::read(manifest).ok()?).ok()?;
+        let executable = engine.executable.canonicalize().ok()?;
+        let metadata = fs::metadata(&executable).ok()?;
+        (engine.abi == ABI
+            && engine.renderer_revision > 0
+            && executable.starts_with(store)
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o111 != 0)
+            .then_some(Self {
+                executable,
+                ..engine
+            })
+    }
+}
 
 #[derive(serde::Deserialize)]
 struct Bundle {
@@ -169,6 +207,18 @@ pub fn update_available() -> Result<bool> {
     update_available_from_release(&metadata)
 }
 pub fn update_available_from_release(metadata: &[u8]) -> Result<bool> {
+    if managed_by_nixos() {
+        let Some(installed) = NixosEngine::installed() else {
+            return Ok(false);
+        };
+        let release: serde_json::Value = serde_json::from_slice(metadata)?;
+        let version =
+            |tag: &str| crate::updates::version(tag.strip_prefix("engine-").unwrap_or(tag));
+        let tag = release["tag_name"]
+            .as_str()
+            .context("Missing engine release tag")?;
+        return Ok(version(tag)? > version(&installed.release)?);
+    }
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("cosmic-forge/renderer");
     let root = prepare_from_release(&cache, metadata, |url| {
         let (status, bytes) = crate::packs::download(url)?;
@@ -263,6 +313,7 @@ impl Progress {
 }
 
 pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<String> {
+    ensure!(!managed_by_nixos(), NIXOS_INSTRUCTIONS);
     let restore = action == Action::Restore;
     let mut release_tag = None;
     progress(Progress::Checking);
@@ -371,6 +422,35 @@ pub fn setup(action: Action, mut progress: impl FnMut(Progress)) -> Result<Strin
 #[cfg(test)]
 mod update_tests {
     use super::*;
+
+    #[test]
+    fn nixos_manifest_requires_a_compatible_executable_in_the_store() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        fs::create_dir(&store).unwrap();
+        let executable = store.join(".cosmic-comp-wrapped");
+        let manifest = temp.path().join("engine.json");
+        fs::write(&executable, "patched compositor").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut record = serde_json::json!({
+            "abi": ABI, "renderer_revision": 9, "executable": executable,
+            "release": "engine-v0.6.4", "cosmic_version": "1.11.0"
+        });
+        let read = |record: &serde_json::Value| {
+            fs::write(&manifest, record.to_string()).unwrap();
+            NixosEngine::read(&manifest, &store)
+        };
+        assert_eq!(read(&record).unwrap().executable, executable);
+        record["abi"] = serde_json::json!(ABI + 1);
+        assert!(read(&record).is_none());
+        record["abi"] = serde_json::json!(ABI);
+        let outside = temp.path().join("outside-store");
+        fs::rename(&executable, &outside).unwrap();
+        symlink(outside, executable).unwrap();
+        assert!(read(&record).is_none());
+    }
 
     #[test]
     fn compositor_updates_preserve_and_ignore_legacy_mod_installations() {

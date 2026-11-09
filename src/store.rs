@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use crate::catalog::{Control, ControlKind, Effect, valid_identifier};
+use crate::engine::{NIXOS_INSTRUCTIONS, NIXOS_MANIFEST, NixosEngine, managed_by_nixos};
 use crate::runtime::{ABI, Backdrop, Parameter, RuntimeEffect};
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -348,6 +349,9 @@ impl Store {
         } else {
             2
         };
+        if managed_by_nixos() {
+            return renderer_available(revision);
+        }
         installed_engine(
             self.backup.ancestors().nth(3).expect("Store backup path"),
             &xdg("HOME", "").join(".local/bin/cosmic-comp"),
@@ -670,6 +674,10 @@ fn installed_engine(state: &Path, launcher: &Path, minimum_revision: u64) -> Opt
 }
 
 pub fn renderer_available(minimum_revision: u64) -> bool {
+    if managed_by_nixos() {
+        return NixosEngine::installed()
+            .is_some_and(|engine| engine.renderer_revision >= minimum_revision);
+    }
     installed_engine(
         &xdg("XDG_STATE_HOME", ".local/state"),
         &xdg("HOME", "").join(".local/bin/cosmic-comp"),
@@ -690,6 +698,13 @@ fn compositor_version(state: &Path, launcher: &Path) -> Option<String> {
 }
 
 pub fn installed_compositor_version() -> Option<String> {
+    if managed_by_nixos() {
+        let engine = NixosEngine::installed()?;
+        return Some(format!(
+            "{} · COSMIC {}",
+            engine.release, engine.cosmic_version
+        ));
+    }
     compositor_version(
         &xdg("XDG_STATE_HOME", ".local/state"),
         &xdg("HOME", "").join(".local/bin/cosmic-comp"),
@@ -754,6 +769,12 @@ impl EngineStatus {
     pub fn note(&self) -> Option<&'static str> {
         match self.state {
             EngineState::Active => None,
+            EngineState::NotInstalled | EngineState::InstallationInvalid if managed_by_nixos() => {
+                Some(NIXOS_INSTRUCTIONS)
+            }
+            EngineState::DifferentCompositor if managed_by_nixos() => Some(
+                "This session is running a different compositor. Log out and back in after rebuilding your NixOS configuration.",
+            ),
             EngineState::NotInstalled => Some(
                 "Custom shaders require the Forge compositor. Install it in Settings, then log out and back in to activate the engine.",
             ),
@@ -800,30 +821,33 @@ fn session_compositor(socket: &Path, proc_root: &Path) -> Option<RunningComposit
 }
 
 fn diagnose_engine(
-    state: &Path,
-    launcher: &Path,
+    installed_executable: Option<PathBuf>,
+    has_installation_record: bool,
     runtime: &Path,
     socket: &Path,
     proc_root: &Path,
+    nixos: bool,
 ) -> EngineStatus {
-    let installed_executable = installed_engine(state, launcher, 1);
     let running = session_compositor(socket, proc_root);
     let marker_pid = fs::read_to_string(runtime.join("cosmic-forge-engine-v1"))
         .ok()
         .and_then(|text| text.trim().parse::<u32>().ok())
         .filter(|pid| *pid > 0);
     let state = match (&installed_executable, &running) {
-        (None, _) if state.join("cosmic-forge/engine-installation.json").exists() => {
-            EngineState::InstallationInvalid
-        }
+        (None, _) if has_installation_record => EngineState::InstallationInvalid,
         (None, _) => EngineState::NotInstalled,
         (Some(_), None) => EngineState::SessionUnverified,
         (Some(installed), Some(running)) => {
             let process = proc_root.join(running.pid.to_string());
+            let is_compositor = if nixos {
+                // The wrapper's executable name exceeds Linux's process name limit.
+                running.executable.file_name() == installed.file_name()
+            } else {
+                Store::text(&process.join("comm"), "") == "cosmic-comp"
+            };
             match (fs::metadata(installed), fs::metadata(process.join("exe"))) {
                 (Ok(installed), Ok(actual)) => {
-                    let announced = marker_pid == Some(running.pid)
-                        && Store::text(&process.join("comm"), "") == "cosmic-comp";
+                    let announced = marker_pid == Some(running.pid) && is_compositor;
                     if installed.ino() == actual.ino() && installed.dev() == actual.dev() {
                         if announced {
                             EngineState::Active
@@ -851,12 +875,27 @@ fn diagnose_engine(
 pub fn engine_status() -> EngineStatus {
     let runtime = xdg("XDG_RUNTIME_DIR", ".cache");
     let display = env::var_os("WAYLAND_DISPLAY").unwrap_or_else(|| "wayland-0".into());
+    let nixos = managed_by_nixos();
+    let (executable, has_record) = if nixos {
+        (
+            NixosEngine::installed().map(|engine| engine.executable),
+            Path::new(NIXOS_MANIFEST).exists(),
+        )
+    } else {
+        let state = xdg("XDG_STATE_HOME", ".local/state");
+        let launcher = xdg("HOME", "").join(".local/bin/cosmic-comp");
+        (
+            installed_engine(&state, &launcher, 1),
+            state.join("cosmic-forge/engine-installation.json").exists(),
+        )
+    };
     diagnose_engine(
-        &xdg("XDG_STATE_HOME", ".local/state"),
-        &xdg("HOME", "").join(".local/bin/cosmic-comp"),
+        executable,
+        has_record,
         &runtime,
         &runtime.join(display),
         Path::new("/proc"),
+        nixos,
     )
 }
 
@@ -903,7 +942,17 @@ mod engine_tests {
             .unwrap(),
         )
         .unwrap();
-        let inspect = || diagnose_engine(&state, &launcher, root, &socket, &proc_root);
+        let inspect_socket = |socket: &Path| {
+            diagnose_engine(
+                installed_engine(&state, &launcher, 1),
+                record.exists(),
+                root,
+                socket,
+                &proc_root,
+                false,
+            )
+        };
+        let inspect = || inspect_socket(&socket);
         let marker = root.join("cosmic-forge-engine-v1");
 
         // An installed Forge and a terminal's PATH do not identify the desktop server.
@@ -932,6 +981,17 @@ mod engine_tests {
         assert_eq!(inspect().note(), None);
         fs::write(process.join("comm"), "another-process\n").unwrap();
         assert_eq!(inspect().state, EngineState::RuntimeUnconfirmed);
+        let nixos_binary = root.join(".cosmic-comp-wrapped");
+        fs::hard_link(&binary, &nixos_binary).unwrap();
+        fs::remove_file(process.join("exe")).unwrap();
+        symlink(&nixos_binary, process.join("exe")).unwrap();
+        fs::write(process.join("comm"), ".cosmic-comp-wr\n").unwrap();
+        assert_eq!(
+            diagnose_engine(Some(nixos_binary), true, root, &socket, &proc_root, true).state,
+            EngineState::Active
+        );
+        fs::remove_file(process.join("exe")).unwrap();
+        symlink(&binary, process.join("exe")).unwrap();
         fs::write(process.join("comm"), "cosmic-comp\n").unwrap();
 
         // A running old executable survives replacement of the installed path.
@@ -947,14 +1007,14 @@ mod engine_tests {
 
         let inaccessible = root.join("missing-wayland-socket");
         assert_eq!(
-            diagnose_engine(&state, &launcher, root, &inaccessible, &proc_root).state,
+            inspect_socket(&inaccessible).state,
             EngineState::SessionUnverified
         );
         fs::remove_file(&old).unwrap();
         assert_eq!(inspect().state, EngineState::SessionUnverified);
         fs::write(&launcher, b"replaced launcher").unwrap();
         assert_eq!(inspect().state, EngineState::InstallationInvalid);
-        fs::remove_file(record).unwrap();
+        fs::remove_file(&record).unwrap();
         assert_eq!(inspect().state, EngineState::NotInstalled);
     }
 

@@ -252,6 +252,16 @@ impl Forge {
         };
     }
     fn compositor_view(&self) -> Element<'_, Message> {
+        if engine::managed_by_nixos() {
+            return widget::column::with_capacity(3)
+                .spacing(16)
+                .push(text::heading("Compositor"))
+                .push(text::body(self.engine_status.label()))
+                .push(text::body(self.engine_status.note().unwrap_or(
+                    "Update or remove the compositor through your NixOS configuration.",
+                )))
+                .into();
+        }
         let install_label = "Install / update compositor";
         let restore_label = "Restore original COSMIC compositor";
         let mut install = button::standard(install_label);
@@ -312,6 +322,8 @@ impl Forge {
                     store::EngineState::NotInstalled | store::EngineState::InstallationInvalid
                 ) {
                     self.engine_status.note().unwrap()
+                } else if engine::managed_by_nixos() {
+                    "This effect requires a newer compositor engine. Update your NixOS configuration, rebuild, then log out and back in."
                 } else {
                     "This effect requires a newer compositor engine. Install / update it in Settings, then log out and back in."
                 };
@@ -413,6 +425,15 @@ impl Forge {
                 ))
                 .push(button::standard("Open effects folder").on_press(Message::Folder)),
         );
+        let patches = if engine::managed_by_nixos() {
+            self.compositor_view()
+        } else {
+            widget::column::with_capacity(2)
+                .spacing(24)
+                .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install the prebuilt compositor, then log out and back in."))
+                .push(self.compositor_view())
+                .into()
+        };
         widget::column::with_capacity(5)
             .spacing(24)
             .push(text::title2("Settings"))
@@ -423,14 +444,7 @@ impl Forge {
                     .add(text::caption("Check the app, engine and shaders on startup and every hour. Shader updates install automatically.")),
             )
             .push(effects)
-            .push(
-                settings::section().title("Patches").add(
-                    widget::column::with_capacity(4)
-                        .spacing(24)
-                        .push(text::body("Requires a supported COSMIC release from 1.10 onward. Install the prebuilt compositor, then log out and back in."))
-                        .push(self.compositor_view()),
-                ),
-            )
+            .push(settings::section().title("Patches").add(patches))
             .into()
     }
 

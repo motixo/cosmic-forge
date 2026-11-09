@@ -16,6 +16,21 @@ Install the compositor from **Settings → Patches**, then log out and back in.
 
 [Native packages](https://github.com/motixo/cosmic-forge/releases/latest) · [Create and import shaders](docs/adding-effects.md)
 
+### NixOS
+
+Use the Nixpkgs revision pinned by Forge for COSMIC 1.11. Add these inputs to your
+system flake.
+
+```nix
+inputs.cosmic-forge.url = "git+https://github.com/motixo/cosmic-forge?submodules=1";
+inputs.nixpkgs.follows = "cosmic-forge/nixpkgs";
+```
+
+Add `cosmic-forge.nixosModules.default` to your system modules and enable
+`services.desktopManager.cosmic.enable` and `programs.cosmic-forge.enable`.
+Rebuild with `nixos-rebuild switch`, then log out and back in. To restore the
+stock compositor, disable `programs.cosmic-forge.enable` and rebuild.
+
 ## Shader gallery
 
 <table>

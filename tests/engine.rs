@@ -184,6 +184,11 @@ fn engine_cache_preserves_symlinks_and_their_targets() {
 
 #[test]
 fn install_uses_the_verified_release_without_requesting_a_build() {
+    if engine::managed_by_nixos() {
+        let result = engine::setup(engine::Action::Install, |_| unreachable!());
+        assert_eq!(result.unwrap_err().to_string(), engine::NIXOS_INSTRUCTIONS);
+        return;
+    }
     if std::env::var_os("FORGE_TEST_ACTION_CHILD").is_some() {
         let mut stages = Vec::new();
         assert!(
@@ -224,16 +229,23 @@ print('FORGE_PROGRESS:already_installed',flush=True)
     .unwrap();
     fs::write(root.join("bundle.json"), bytes).unwrap();
     let curl = tools.join("curl");
+    let python = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|directory| directory.join("python3"))
+        .find(|path| path.is_file())
+        .expect("Python 3 is required for engine tests");
     fs::write(
         &curl,
-        r#"#!/usr/bin/python3
-import os,sys
+        format!(
+            "#!{}\n{}",
+            python.display(),
+            r#"import os,sys
 from pathlib import Path
 root=Path(os.environ['FORGE_ACTION_FIXTURE'])
 source='release.json' if sys.argv[-1].endswith('/releases/latest') else 'bundle.json'
 Path(sys.argv[sys.argv.index('--output')+1]).write_bytes((root/source).read_bytes())
 sys.stdout.write('200')
 "#,
+        ),
     )
     .unwrap();
     fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
@@ -271,6 +283,11 @@ sys.stdout.write('200')
 
 #[test]
 fn offline_recovery_restores_original_compositor_without_the_source_checkout() {
+    if engine::managed_by_nixos() {
+        let result = engine::setup(engine::Action::Restore, |_| unreachable!());
+        assert_eq!(result.unwrap_err().to_string(), engine::NIXOS_INSTRUCTIONS);
+        return;
+    }
     if std::env::var_os("FORGE_TEST_RESTORE_CHILD").is_some() {
         let mut stages = Vec::new();
         let result =
