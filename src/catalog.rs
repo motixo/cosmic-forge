@@ -93,7 +93,7 @@ impl Control {
             self.key
         );
         ensure!(
-            !matches!(self.key.as_str(), "forge_runtime" | "forge_backdrop"),
+            !crate::runtime::reserved_control_key(&self.key),
             "Reserved engine setting"
         );
         ensure!(!self.label.trim().is_empty(), "A control needs a label");

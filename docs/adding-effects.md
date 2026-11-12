@@ -73,12 +73,19 @@ request redraws while the effect is visible. Leave it off for static shaders.
 | Input | Meaning |
 | --- | --- |
 | `float time` | Compositor clock in seconds |
-| `float delta_time`, `int frame_index` | Seconds since the previous output frame and per-output frame counter |
+| `float delta_time`, `int frame_index` | Seconds since the previous animation frame and per-output animation frame counter |
 | `vec2 window_position`, `vec2 window_velocity` | Desktop-global position and velocity in logical units and logical units per second |
-| `float window_age` | Seconds since the effect first rendered on this surface (revision 6+) |
+| `float window_age` | Seconds since the effect first rendered on this surface (revision 6+). It pauses while the window is unfocused if the performance option is enabled. |
 
 For smooth speed changes, see how Rain Glass maps `forge_animation_speed_percent`
 and reads `forge_animation_clock.x` (Engine 0.6.3+). [Rain Glass source](https://github.com/motixo/cosmic-forge-shaders/blob/main/shaders/rain-glass.frag)
+
+With renderer revision 13+, a GLSL comment can declare when the animation can stop.
+
+- `// forge-animation-idle: zero forge_strength` stops when the bound strength reaches zero.
+- `// forge-animation-idle: accumulation forge_enabled forge_seconds forge_density` stops after the fill time while accumulation is enabled, or at zero density while it is off. The fill time uses seconds with a minimum of one second.
+
+Use the bound uniform names in the comment. The shader should produce a still image under the stated condition.
 
 ## Test and share
 

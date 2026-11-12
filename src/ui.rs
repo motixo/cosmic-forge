@@ -10,7 +10,7 @@ use cosmic_forge::{
     APP_ID, VERSION,
     catalog::{self, Control, ControlKind, Effect},
     engine, noise, packs,
-    runtime::Backdrop,
+    runtime::{ANIMATION_FPS, Backdrop},
     store::{self, Fingerprint, Store, xdg},
     updates,
 };
@@ -36,6 +36,8 @@ pub enum Message {
     Value(usize, Value),
     Backdrop(usize),
     Animation(bool),
+    AnimationFps(u16),
+    AnimationFocusOnly(bool),
     Flush,
     Engine(engine::Action),
     Settings,
@@ -414,7 +416,37 @@ impl Forge {
             .push(button::standard("Reset controls").on_press(Message::Reset));
         content.push(section).push(actions).into()
     }
+    fn performance_settings_available(&self) -> bool {
+        self.engine_status.state == store::EngineState::Active
+            && store::renderer_available(engine::PERFORMANCE_RENDERER_REVISION)
+    }
+
     fn settings_view(&self) -> Element<'_, Message> {
+        let rate = settings::item::builder("Animation frame rate");
+        let focus = settings::item::builder("Animate only the focused window");
+        let performance = settings::section().title("Performance");
+        let performance = if self.performance_settings_available() {
+            let selected = ANIMATION_FPS
+                .iter()
+                .position(|&fps| fps == self.state.animation_fps);
+            const LABELS: &[&str] = &[
+                "15 FPS",
+                "20 FPS",
+                "30 FPS",
+                "60 FPS",
+                "120 FPS",
+                "Monitor refresh rate",
+            ];
+            performance
+                .add(rate.control(widget::dropdown(LABELS, selected, |index| {
+                    Message::AnimationFps(ANIMATION_FPS[index])
+                })))
+                .add(focus.toggler(self.state.animation_focus_only, Message::AnimationFocusOnly))
+        } else {
+            performance
+                .add(rate.control(text::body("Requires active Forge renderer r13+")))
+                .add(focus.control(text::body("Requires active Forge renderer r13+")))
+        };
         let effects = settings::section().title("Effects").add(
             widget::column::with_capacity(6)
                 .spacing(16)
@@ -434,7 +466,7 @@ impl Forge {
                 .push(self.compositor_view())
                 .into()
         };
-        widget::column::with_capacity(5)
+        widget::column::with_capacity(6)
             .spacing(24)
             .push(text::title2("Settings"))
             .push(
@@ -443,6 +475,7 @@ impl Forge {
                         .toggler(self.state.automatic_updates, Message::AutomaticUpdates))
                     .add(text::caption("Check the app, engine and shaders on startup and every hour. Shader updates install automatically.")),
             )
+            .push(performance)
             .push(effects)
             .push(settings::section().title("Patches").add(patches))
             .into()
@@ -769,6 +802,18 @@ impl cosmic::Application for Forge {
                     } else {
                         self.show_update_dialog = false;
                     }
+                }
+            }
+            Message::AnimationFps(fps) => {
+                if self.performance_settings_available() {
+                    let result = self.store.set_animation_fps(fps);
+                    self.report(result);
+                }
+            }
+            Message::AnimationFocusOnly(enabled) => {
+                if self.performance_settings_available() {
+                    let result = self.store.set_animation_focus_only(enabled);
+                    self.report(result);
                 }
             }
             Message::ToggleChangelog(index) => {

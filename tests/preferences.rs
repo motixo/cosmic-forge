@@ -67,6 +67,69 @@ fn automatic_update_reminders_are_opt_in_persistent_and_separate_from_effects() 
     .unwrap();
     assert!(!f.store.automatic_updates());
 }
+
+#[test]
+fn animation_frame_rate_is_global_validated_and_persistent() {
+    let mut f = Fixture::new();
+    assert_eq!(f.store.animation_fps(), 0);
+    for fps in [15, 20, 30, 60, 120, 0] {
+        f.store.set_animation_fps(fps).unwrap();
+        assert_eq!(f.store.fingerprint(&f.effects).animation_fps, fps);
+        assert_eq!(f.store.selected(), "frosted");
+    }
+    f.store.set_animation_fps(60).unwrap();
+    assert!(f.store.set_animation_fps(90).is_err());
+    let reopened = Store::new(f.store.root.clone(), f._temp.path().join("reopened-state"));
+    assert_eq!(reopened.animation_fps(), 60);
+    f.write("forge_animation_fps", "unknown");
+    assert_eq!(reopened.animation_fps(), 0);
+}
+#[test]
+fn a_legacy_low_frame_rate_is_read_and_migrated_on_edit() {
+    let mut f = Fixture::new();
+    f.write("forge_animation_fps", "30");
+    f.write("forge_animation_fps_low", "20");
+    assert_eq!(f.store.animation_fps(), 20);
+    f.store.set_animation_fps(15).unwrap();
+    assert_eq!(f.store.animation_fps(), 15);
+    assert_eq!(
+        Store::text(&f.store.comp.join("forge_animation_fps"), ""),
+        "15"
+    );
+    assert!(!f.store.comp.join("forge_animation_fps_low").exists());
+    f.store.undo().unwrap();
+    assert_eq!(f.store.animation_fps(), 20);
+}
+
+#[test]
+fn a_shader_control_cannot_override_the_focus_preference() {
+    let mut f = Fixture::new();
+    let control = serde_json::from_value(json!({
+        "key": cosmic_forge::runtime::ANIMATION_FOCUS_KEY,
+        "label": "Animation",
+        "type": "boolean",
+        "default": false,
+    }))
+    .unwrap();
+    assert!(f.store.set_control(&control, &json!(true)).is_err());
+    assert!(!f.store.animation_focus_only());
+}
+
+#[test]
+fn focused_window_animation_is_opt_in_and_preserves_frame_rate() {
+    let mut f = Fixture::new();
+    assert!(!f.store.animation_focus_only());
+    f.store.set_animation_fps(20).unwrap();
+    f.store.set_animation_focus_only(true).unwrap();
+    let reopened = Store::new(f.store.root.clone(), f._temp.path().join("reopened-state"));
+    assert!(reopened.fingerprint(&f.effects).animation_focus_only);
+    assert_eq!(reopened.animation_fps(), 20);
+    f.store.set_animation_focus_only(false).unwrap();
+    assert!(!reopened.animation_focus_only());
+    f.write(cosmic_forge::runtime::ANIMATION_FOCUS_KEY, "invalid");
+    assert!(!reopened.animation_focus_only());
+}
+
 #[test]
 fn selection_preserves_crystal_and_undo_restores_absence() {
     let mut f = Fixture::new();

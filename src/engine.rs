@@ -12,6 +12,7 @@ use std::{
 pub const REPOSITORY: &str = "motixo/cosmic-forge-engine";
 pub const ASSET: &str = "cosmic-forge-engine.json";
 pub const WALLPAPER_RENDERER_REVISION: u64 = 5;
+pub const PERFORMANCE_RENDERER_REVISION: u64 = 13;
 pub const NIXOS_INSTRUCTIONS: &str = "Enable programs.cosmic-forge.enable in your NixOS configuration, rebuild, then log out and back in. Update or remove the compositor through your NixOS configuration.";
 pub(crate) const NIXOS_MANIFEST: &str = "/etc/cosmic-forge/engine.json";
 // Only offline stock recovery is embedded; engine setup uses verified releases.

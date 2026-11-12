@@ -21,6 +21,8 @@ def main():
     child = None
     record_path = session.path / 'state/cosmic-forge/engine-installation.json'
     record = json.loads(record_path.read_text())
+    record['renderer_revision'] = 12
+    record_path.write_text(json.dumps(record))
     binary = Path(record['destination']) / 'cosmic-comp'
     binary.write_bytes(Path(sys.executable).read_bytes())
     runtime = session.path / 'runtime'
@@ -81,6 +83,13 @@ def main():
         area = (300, active.height - 80, active.width, active.height)
         assert ImageChops.difference(active.crop(area), unconfirmed.crop(area)).getbbox(), \
             'The footer did not refresh when the marker appeared'
+        session.click(856, 24)
+        session.click(972, 342)
+        session.click(940, 384)
+        assert session.get('forge_animation_fps') is None, 'An active r12 engine cannot set FPS'
+        session.click(967, 385)
+        assert session.get('forge_animation_focus_only') is None, 'An active r12 engine cannot set Focus-only'
+        session.click(856, 24)
         marker.write_text('invalid')
         check('runtime_unconfirmed')
         marker.write_text(str(child.pid))
@@ -88,10 +97,33 @@ def main():
         replacement.write_bytes(binary.read_bytes())
         replacement.chmod(0o755)
         replacement.replace(binary)
+        record['renderer_revision'] = 13
+        record_path.write_text(json.dumps(record))
         check('restart_required')
         session.click(856, 24)
         session.capture('settings-restart-required')
+        session.click(972, 342)
+        session.click(940, 384)
+        assert session.get('forge_animation_fps') is None, 'Installing r13 does not activate FPS'
+        session.click(967, 385)
+        assert session.get('forge_animation_focus_only') is None, 'Installing r13 does not activate Focus-only'
         session.click(856, 24)
+        start(binary)
+        marker.write_text(str(child.pid))
+        check('active')
+        session.click(856, 24)
+        for fps, row in [(15, 384), (20, 420), (30, 456), (60, 492), (120, 528), (0, 564)]:
+            session.click(972, 342)
+            session.click(940, row)
+            assert session.get('forge_animation_fps') == str(fps), f'Active r13 should save {fps}'
+        session.click(967, 385)
+        assert session.get('forge_animation_focus_only') == 'true'
+        session.click(967, 385)
+        assert session.get('forge_animation_focus_only') == 'false'
+        (session.comp / 'forge_animation_fps').unlink()
+        (session.comp / 'forge_animation_focus_only').unlink()
+        session.click(856, 24)
+        print('PASS FPS and Focus-only are editable with an active r13 engine', flush=True)
         stop()
         check('session_unverified')
         launcher = Path(record['launcher'])

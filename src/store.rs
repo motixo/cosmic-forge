@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use crate::catalog::{Control, ControlKind, Effect, valid_identifier};
 use crate::engine::{NIXOS_INSTRUCTIONS, NIXOS_MANIFEST, NixosEngine, managed_by_nixos};
-use crate::runtime::{ABI, Backdrop, Parameter, RuntimeEffect};
-use anyhow::{Context, Result, bail};
+use crate::runtime::{
+    ABI, ANIMATION_FOCUS_KEY, ANIMATION_FPS, ANIMATION_FPS_KEY, Backdrop,
+    LEGACY_LOW_ANIMATION_FPS_KEY, Parameter, RuntimeEffect, resolve_animation_fps,
+};
+use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -66,6 +69,8 @@ struct Edit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
     pub automatic_updates: bool,
+    pub animation_fps: u16,
+    pub animation_focus_only: bool,
     pub selected: String,
     pub dark: bool,
     pub accent: String,
@@ -130,6 +135,39 @@ impl Store {
         self.commit(Changes::from([(
             self.root.join("cosmic-forge/automatic-updates.json"),
             Some(serde_json::to_vec(&enabled)?),
+        )]))
+    }
+
+    pub fn animation_fps(&self) -> u16 {
+        resolve_animation_fps(
+            Self::text(&self.comp.join(ANIMATION_FPS_KEY), "")
+                .parse()
+                .ok(),
+            Self::text(&self.comp.join(LEGACY_LOW_ANIMATION_FPS_KEY), "")
+                .parse()
+                .ok(),
+        )
+    }
+
+    pub fn set_animation_fps(&mut self, fps: u16) -> Result<bool> {
+        ensure!(ANIMATION_FPS.contains(&fps), "Invalid animation frame rate");
+        self.commit(Changes::from([
+            (
+                self.comp.join(ANIMATION_FPS_KEY),
+                Some(fps.to_string().into_bytes()),
+            ),
+            (self.comp.join(LEGACY_LOW_ANIMATION_FPS_KEY), None),
+        ]))
+    }
+
+    pub fn animation_focus_only(&self) -> bool {
+        Self::text(&self.comp.join(ANIMATION_FOCUS_KEY), "false") == "true"
+    }
+
+    pub fn set_animation_focus_only(&mut self, enabled: bool) -> Result<bool> {
+        self.commit(Changes::from([(
+            self.comp.join(ANIMATION_FOCUS_KEY),
+            Some(enabled.to_string().into_bytes()),
         )]))
     }
 
@@ -614,6 +652,8 @@ impl Store {
     pub fn fingerprint(&self, effects: &[Effect]) -> Fingerprint {
         Fingerprint {
             automatic_updates: self.automatic_updates(),
+            animation_fps: self.animation_fps(),
+            animation_focus_only: self.animation_focus_only(),
             backdrops: effects.iter().map(|e| self.backdrop(e)).collect(),
             animations: effects.iter().map(|e| self.animated(e)).collect(),
             material: [

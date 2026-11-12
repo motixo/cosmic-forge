@@ -2,6 +2,7 @@
   lib,
   cosmic-comp,
   pinnedCompositor,
+  python3,
 }:
 
 let
@@ -13,6 +14,7 @@ let
     "runtime"
     "loader"
     "animation"
+    "effect_map"
     "backdrop"
     "surface_state"
   ];
@@ -26,6 +28,17 @@ cosmic-comp.overrideAttrs (old: {
     CARGO_PROFILE_RELEASE_LTO = "thin";
   };
   cargoTestFlags = (old.cargoTestFlags or [ ]) ++ [ "--lib" ];
+
+  nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ python3 ];
+
+  prePatch = (old.prePatch or "") + ''
+    export forgeSmithayVendor="$cargoDepsCopy"
+  '';
+
+  # Cargo's vendor hook verifies the original lockfile at the end of patchPhase.
+  preBuild = ''
+    python3 ${../engine}/prepare_smithay.py . --vendor "$forgeSmithayVendor"
+  '' + (old.preBuild or "");
 
   postPatch = (old.postPatch or "") + ''
     ${lib.concatMapStringsSep "\n" (name: ''
