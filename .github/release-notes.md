@@ -1,1 +1,2 @@
-- Add NixOS support for COSMIC 1.11 with a Nix flake and a system-managed Forge compositor.
+- Set animation to 15, 20, 30, 60, 120 FPS or the display refresh rate.
+- Add an option to animate only the focused window.

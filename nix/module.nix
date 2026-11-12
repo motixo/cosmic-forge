@@ -25,7 +25,7 @@ in
     environment.etc."cosmic-forge/engine.json".text = builtins.toJSON {
       inherit (engine) abi renderer_revision;
       cosmic_version = pkgs.cosmic-comp.version;
-      release = "engine-v0.6.4";
+      release = "engine-v0.6.5";
       executable = "${pkgs.cosmic-comp}/bin/.cosmic-comp-wrapped";
     };
   };
